@@ -1,0 +1,21 @@
+{
+  "name": "smartstudy-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SmartStudy monorepo — run mobile and backend from the project root",
+  "scripts": {
+    "start": "npm run start --prefix mobile",
+    "expo": "npm run start --prefix mobile",
+    "mobile": "npm run start --prefix mobile",
+    "mobile:android": "npm run android --prefix mobile",
+    "mobile:ios": "npm run ios --prefix mobile",
+    "mobile:web": "npm run web --prefix mobile",
+    "mobile:apk": "npm run build:apk:local --prefix mobile",
+    "mobile:apk:cloud": "npm run build:apk --prefix mobile",
+    "mobile:apk:public": "npm run build:apk:public --prefix mobile",
+    "backend": "cd backend && .\\venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+  },
+  "dependencies": {
+    "expo": "~54.0.0"
+  }
+}

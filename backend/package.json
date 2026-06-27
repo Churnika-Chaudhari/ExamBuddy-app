@@ -1,0 +1,11 @@
+{
+  "name": "smartstudy-backend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Python API — not an Expo app. Use npm scripts below or run from repo root.",
+  "scripts": {
+    "mobile": "npm run start --prefix ..",
+    "expo": "npm run start --prefix ..",
+    "start": "node -e \"console.log('\\nThis folder is the Python backend only.\\n\\n  Start mobile app:  npm run mobile   (from here) or  npm start  (from repo root)\\n  Start backend API: npm run backend  (from repo root)\\n\\nDo not run npx expo start from backend/ — it will fail.\\n'); process.exit(1)\""
+  }
+}

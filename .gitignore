@@ -1,0 +1,22 @@
+# Node
+node_modules/
+
+# Expo
+.expo/
+
+# Android / Gradle
+.gradle/
+.gradle-home/
+mobile/.gradle-home/
+
+# IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
