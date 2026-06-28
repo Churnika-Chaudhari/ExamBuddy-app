@@ -3,6 +3,8 @@ node_modules/
 
 # Expo
 .expo/
+mobile/dist/
+*.apk
 
 # Android / Gradle
 .gradle/

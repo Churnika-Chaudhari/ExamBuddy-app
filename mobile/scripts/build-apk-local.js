@@ -100,7 +100,8 @@ run(
 
 const apkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
 const shareDir = path.join(mobileDir, 'dist');
-const shareApk = path.join(shareDir, 'SmartStudy.apk');
+const apkOutputName = process.env.APK_OUTPUT_NAME || 'SmartStudy.apk';
+const shareApk = path.join(shareDir, apkOutputName);
 
 if (!fs.existsSync(apkPath)) {
   console.error('Build finished but APK not found at', apkPath);
