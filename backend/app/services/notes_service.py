@@ -16,6 +16,7 @@ from app.repositories.stats_repository import StatsRepository
 from app.services.ai.ai_service import AIService
 from app.services.ai.prompts import PROMPT_VERSION
 from app.services.generated_note_mapper import map_generated_note
+from app.services.pipeline.notes_pipeline import NotesPipeline
 from app.services.mappers import map_document_response
 from app.services.rag.retriever import DocumentRetriever
 from app.utils.pdf_generator import generate_note_pdf_bytes
@@ -56,6 +57,7 @@ class NotesService:
         self.generated_notes_repo = generated_notes_repo
         self.ai_service = ai_service or AIService()
         self.rag_retriever = DocumentRetriever(document_repo)
+        self.notes_pipeline = NotesPipeline()
 
     def _build_analysis_context(self, analysis: dict[str, Any]) -> str:
         context = analysis.get("summary") or ""
@@ -89,14 +91,15 @@ class NotesService:
         topic_key = normalize_topic_key(topic)
         analysis_context = ""
         document_ids: list[str] = []
+        analysis_doc: dict[str, Any] | None = None
 
         if analysis_id:
-            analysis = await self.analysis_repo.get_by_id_and_user(analysis_id, user_id)
-            if not analysis:
+            analysis_doc = await self.analysis_repo.get_by_id_and_user(analysis_id, user_id)
+            if not analysis_doc:
                 raise NotFoundError("Analysis not found")
-            analysis_context = self._build_analysis_context(analysis)
-            subject = subject or analysis.get("subject")
-            document_ids = [str(d) for d in analysis.get("document_ids", [])]
+            analysis_context = self._build_analysis_context(analysis_doc)
+            subject = subject or analysis_doc.get("subject")
+            document_ids = [str(d) for d in analysis_doc.get("document_ids", [])]
 
         if not regenerate:
             cached = await self.generated_notes_repo.find_cached(
@@ -120,6 +123,19 @@ class NotesService:
             analysis_document_ids=document_ids or None,
         )
 
+        pipeline_context = ""
+        exam_priority = ""
+        if analysis_doc:
+            pipeline_context = self.notes_pipeline.build_notes_context(
+                topic, analysis_doc, frequency=frequency
+            )
+            if not frequency:
+                for row in analysis_doc.get("topic_frequency_table") or []:
+                    if str(row.get("topic", "")).lower() == topic.lower():
+                        frequency = int(row.get("frequency", 0))
+                        break
+            exam_priority = self.notes_pipeline.topic_frequency_label(frequency)
+
         logger.info(
             "Generating notes topic=%s user=%s rag_chunks=%d regenerate=%s",
             topic,
@@ -134,6 +150,8 @@ class NotesService:
             analysis_context=analysis_context,
             subject=subject,
             rag_sources=rag_sources,
+            pipeline_context=pipeline_context,
+            exam_priority=exam_priority,
         )
 
         notes_text = (result.get("notes") or result.get("content") or "").strip()

@@ -202,22 +202,35 @@ class AIService:
         subject: str | None = None,
         *,
         num_documents: int = 1,
+        local_topics: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if not content.strip():
             raise ExternalServiceError("No text content to analyze")
+
+        extracted_topics_hint = ""
+        if local_topics and local_topics.get("syllabus_topics"):
+            extracted_topics_hint = "\n".join(
+                f"- {t} (freq: {local_topics.get('topic_frequency', {}).get(t, '?')})"
+                for t in local_topics["syllabus_topics"][:30]
+            )
 
         if self.ai_available:
             user_prompt = PYQ_ANALYSIS_USER_PROMPT.format(
                 subject=subject or "General",
                 num_documents=num_documents,
                 content=content[:50000],
+                extracted_topics=extracted_topics_hint or "None pre-extracted",
             )
             try:
                 result, metadata = await self._generate_json_with_fallback(
                     PYQ_ANALYSIS_SYSTEM_PROMPT, user_prompt
                 )
                 result = sanitize_analysis_result(result)
-                if not result.get("topic_table"):
+                if local_topics and local_topics.get("topic_table"):
+                    from app.services.pipeline.notes_pipeline import NotesPipeline
+
+                    result = NotesPipeline().merge_ai_analysis(local_topics, result)
+                elif not result.get("topic_table"):
                     local = analyze_pyq_local(content, subject)
                     for key in (
                         "topic_table", "academic_topic_table", "most_important_topics",
@@ -229,14 +242,22 @@ class AIService:
             except Exception as exc:
                 logger.error("PYQ analysis AI failed, falling back to local: %s", exc)
 
+        from app.services.pipeline.notes_pipeline import NotesPipeline
         from app.utils.topic_analysis import build_consolidated_analysis
 
-        result = build_consolidated_analysis(
-            content, subject=subject, num_documents=num_documents
-        )
+        pipeline = NotesPipeline()
+        if local_topics and local_topics.get("topic_table"):
+            result = sanitize_analysis_result(local_topics)
+        else:
+            pipeline_result = pipeline.run(content, subject=subject, num_documents=num_documents)
+            result = pipeline_result.topic_analysis or build_consolidated_analysis(
+                pipeline_result.cleaned_text,
+                subject=subject,
+                num_documents=num_documents,
+            )
         metadata = {
             "provider": "local",
-            "model": "rule-based",
+            "model": "pipeline",
             "tokens_used": None,
             "prompt_version": PROMPT_VERSION,
         }
@@ -260,35 +281,44 @@ class AIService:
         content = f"""# {topic}
 
 ## Definition
-{topic} is a core {subject_label} concept tested in university exams.
+{topic} is a core {subject_label} concept that students must understand for university examinations.
 
-## Explanation
-{topic} is an important syllabus topic. Focus on the core definitions, the main principles, and how {topic} is applied to solve problems.{retrieved_hint}
+## Introduction
+This topic is part of the {subject_label} syllabus and is frequently tested in previous year papers.{retrieved_hint}
 
-## Key Points
-- Fundamental definitions and terminology of **{topic}**
-- Core principles and relationships
-- Standard exam question patterns from previous year papers
+## Working / Concept
+Explain the underlying mechanism step by step — how {topic} works, why it exists, and how it interacts with related concepts.
+
+## Key Components
+- Primary building blocks of **{topic}**
+- Relationships between components
+- Role of each component in the overall system
+
+## Advantages
+- Practical benefits in real systems and exam answers
+
+## Disadvantages
+- Limitations and trade-offs students should mention in exams
+
+## Applications
+- Industry and academic use cases where {topic} applies
 
 ## Example
-A practical example illustrating how {topic} is used in real scenarios.
+A concrete engineering example demonstrating {topic} in practice.
 
-## Advantages and Disadvantages
-- Benefits of {topic} in academic and real-world contexts
-- Limitations and trade-offs to keep in mind
-
-## Important Exam Questions
-- What is {topic}? Give a clear definition with its purpose.
-- Why is {topic} important and where is it applied?
-- Compare {topic} with related topics from the syllabus.
+## Important Exam Points
+- Standard definitions examiners expect
+- Common comparison and numerical questions
 
 ## Quick Revision
-- One-line definition
-- Three key points
-- One example
-- One exam tip
+- One-line definition of {topic}
+- Three must-remember points
+- One typical exam question pattern
 
-Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI and RAG notes."""
+## Memory Trick
+Create a simple acronym linking the key points of {topic}.
+
+Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI-generated notes."""
         meta: dict[str, Any] = {
             "provider": "local",
             "model": "rule-based",
@@ -321,6 +351,8 @@ Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI and RAG notes."
         analysis_context: str = "",
         subject: str | None = None,
         rag_sources: list[dict[str, Any]] | None = None,
+        pipeline_context: str = "",
+        exam_priority: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if not self.ai_available:
             result, meta = self._local_topic_notes(
@@ -333,8 +365,10 @@ Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI and RAG notes."
         user_prompt = TOPIC_NOTES_USER_PROMPT.format(
             topic=topic,
             subject=subject or "General",
+            exam_priority=exam_priority or "",
             rag_context=rag_context[:28000] or "No retrieved document content available.",
             analysis_context=analysis_context[:8000] or "No PYQ analysis context.",
+            pipeline_context=pipeline_context[:4000] or "",
         )
         try:
             result, metadata = await self._generate_json_with_fallback(

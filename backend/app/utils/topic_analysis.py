@@ -10,9 +10,10 @@ from collections import Counter, defaultdict
 from difflib import SequenceMatcher
 from typing import Any
 
+from app.services.pipeline.text_preprocessor import preprocess_pyq_text
 from app.utils.syllabus_concept_extractor import extract_concepts_from_questions
 from app.utils.topic_extractor import is_valid_topic
-from app.utils.watermark_filter import remove_watermarks_from_text
+from app.services.pipeline.topic_pipeline import extract_and_merge_topics, merge_similar_topics
 
 _QUESTION_PREFIX = re.compile(
     r"^(?:\d+[\).\]]|\([a-z]\)|[Qq]\d+[\).:]|[ivxIVX]+[\).\]])\s*",
@@ -88,14 +89,21 @@ def build_consolidated_analysis(
     subject: str | None = None,
     num_documents: int = 1,
 ) -> dict[str, Any]:
-    content = remove_watermarks_from_text(content)
-    lines = _extract_question_lines(content)
+    preprocessed = preprocess_pyq_text(content)
+    pipeline_result = extract_and_merge_topics(
+        preprocessed.question_lines,
+        num_documents=num_documents,
+    )
+    if pipeline_result:
+        return pipeline_result
+
+    lines = preprocessed.question_lines or _extract_question_lines(preprocessed.cleaned_text)
     raw_counter = extract_concepts_from_questions(lines)
 
     if not raw_counter:
         return _empty_result(num_documents, len(lines))
 
-    merged = _merge_similar_topics(dict(raw_counter))
+    merged = merge_similar_topics(dict(raw_counter))
     ranked = sorted(merged.items(), key=lambda x: -x[1])
     if not ranked:
         return _empty_result(num_documents, len(lines))

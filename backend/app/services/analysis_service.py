@@ -13,8 +13,7 @@ from app.repositories.stats_repository import StatsRepository
 from app.services.ai.ai_service import AIService
 from app.services.mappers import map_document_response
 from app.services.subject_service import SubjectService
-from app.utils.watermark_filter import remove_watermarks_from_text
-from app.utils.topic_extractor import sanitize_analysis_result
+from app.services.pipeline.notes_pipeline import NotesPipeline
 from app.services.quiz_service import _topics_from_analysis_doc
 
 logger = logging.getLogger(__name__)
@@ -35,6 +34,7 @@ class AnalysisService:
         self.stats_repo = stats_repo
         self.ai_service = ai_service or AIService()
         self.subject_service = subject_service
+        self.notes_pipeline = NotesPipeline()
 
     async def create_analysis(
         self,
@@ -115,15 +115,30 @@ class AnalysisService:
                 for doc in documents
                 if doc.get("extracted_text")
             )
-            combined_text = remove_watermarks_from_text(combined_text)
             if not combined_text.strip():
                 raise ValidationAppError("No extractable text found in selected documents")
 
             subject = documents[0].get("subject")
-            result, metadata = await self.ai_service.analyze_pyq(
-                combined_text, subject, num_documents=len(documents)
+            pipeline_result = self.notes_pipeline.run(
+                combined_text,
+                subject=subject,
+                num_documents=len(documents),
             )
-            result = sanitize_analysis_result(result)
+            cleaned_text = pipeline_result.cleaned_text
+            local_analysis = pipeline_result.topic_analysis
+
+            result, metadata = await self.ai_service.analyze_pyq(
+                cleaned_text,
+                subject,
+                num_documents=len(documents),
+                local_topics=local_analysis,
+            )
+            result = self.notes_pipeline.merge_ai_analysis(local_analysis, result)
+            metadata["pipeline"] = {
+                "lines_removed": pipeline_result.preprocess_stats.lines_removed,
+                "questions_parsed": len(pipeline_result.question_lines),
+                "topics_extracted": len(result.get("topic_table") or []),
+            }
 
             await self.analysis_repo.update(
                 analysis_id,

@@ -14,6 +14,7 @@ from app.services.mappers import map_document_response
 from app.services.subject_service import SubjectService
 from app.utils.subject_detector import resolve_document_subject
 from app.utils.text_extractor import extract_text
+from app.services.pipeline.notes_pipeline import NotesPipeline
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -31,6 +32,7 @@ class DocumentService:
         self.stats_repo = stats_repo
         self.file_service = file_service or FileService()
         self.subject_service = subject_service
+        self.notes_pipeline = NotesPipeline()
 
     async def upload_document(
         self,
@@ -168,11 +170,13 @@ class DocumentService:
                     "No text could be extracted from this file. "
                     "Ensure the PDF contains selectable text (not a scanned image-only PDF)."
                 )
+            preprocessed = self.notes_pipeline.preprocess(result["text"])
+            cleaned_text = preprocessed.cleaned_text or result["text"]
             await self.document_repo.update(
                 document_id,
                 user_id,
                 {
-                    "extracted_text": result["text"],
+                    "extracted_text": cleaned_text,
                     "page_count": result["page_count"],
                     "status": ProcessingStatus.READY,
                     "error_message": None,

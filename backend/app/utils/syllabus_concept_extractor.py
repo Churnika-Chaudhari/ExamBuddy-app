@@ -214,6 +214,9 @@ def _standardize_topic(phrase: str) -> str | None:
     if _is_instruction_only(key):
         return None
 
+    if re.match(r"^(its|their|this|these|those)\s", key):
+        return None
+
     return _title_case_topic(concept)
 
 
@@ -258,11 +261,17 @@ def extract_concepts_from_question(line: str) -> list[str]:
     if len(line) < 8:
         return []
 
+    found: list[str] = []
+
     # Special: primary/foreign keys
     if re.search(r"primary\s+key", line, re.I) and re.search(r"foreign\s+key", line, re.I):
         return ["Database Keys"]
 
-    found: list[str] = []
+    # Compound: "What is Deadlock? Explain its prevention methods."
+    if re.search(r"deadlock", line, re.I):
+        found.append("Deadlock")
+        if re.search(r"prevent", line, re.I):
+            found.append("Deadlock Prevention")
 
     for pattern in _CONCEPT_PATTERNS:
         for match in pattern.finditer(line):
