@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, View, TouchableOpacity } from 'react-native';
+import { ScrollView, StyleSheet, View, TouchableOpacity } from 'react-native';
 import { Text, ActivityIndicator, RadioButton, TextInput } from 'react-native-paper';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
@@ -10,7 +10,7 @@ import type { QuizQuestion } from '@/domain/types';
 import type { RootStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
 import AppCard from '@/presentation/components/AppCard';
-import ScreenWrapper from '@/presentation/components/ScreenWrapper';
+import ScreenWrapper, { STACK_SCREEN_EDGES } from '@/presentation/components/ScreenWrapper';
 import { useQuizStore } from '@/store/quizStore';
 
 type Route = RouteProp<RootStackParamList, 'QuizPlay'>;
@@ -36,9 +36,11 @@ export default function QuizPlayScreen() {
 
   if (isLoading || !activeQuiz) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      <ScreenWrapper scrollable={false} edges={STACK_SCREEN_EDGES}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </ScreenWrapper>
     );
   }
 
@@ -85,7 +87,12 @@ export default function QuizPlayScreen() {
           </View>
         </View>
 
-        <View style={styles.content}>
+        <ScrollView
+          style={styles.contentScroll}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           <AppCard style={styles.questionCard}>
             {current.topic ? <Text style={styles.topic}>{current.topic}</Text> : null}
             <Text style={styles.typeBadge}>{qType.replace('_', ' ').toUpperCase()}</Text>
@@ -137,7 +144,7 @@ export default function QuizPlayScreen() {
               />
             )}
           </View>
-        </View>
+        </ScrollView>
 
         <View style={styles.footer}>
           {currentIndex > 0 ? (
@@ -168,11 +175,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.background,
   },
   container: {
     flex: 1,
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
   },
   progressHeader: {
     marginBottom: spacing.lg,
@@ -203,8 +210,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: 3,
   },
-  content: {
+  contentScroll: {
     flex: 1,
+  },
+  content: {
+    flexGrow: 1,
+    paddingBottom: spacing.md,
   },
   questionCard: {
     padding: spacing.lg,
@@ -237,6 +248,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.white,
+    flexShrink: 0,
   },
   optionSelected: {
     borderColor: colors.primary,
@@ -258,6 +270,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     paddingVertical: spacing.md,
+    paddingBottom: spacing.sm,
   },
   navBtn: {
     flex: 1,

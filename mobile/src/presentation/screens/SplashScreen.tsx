@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Text, ActivityIndicator } from 'react-native-paper';
+import { ActivityIndicator, Text } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ENV } from '@/core/config/apiConfig';
 import { colors, spacing, typography } from '@/core/theme';
 import type { RootStackParamList } from '@/navigation/types';
+import AppLogo from '@/presentation/components/AppLogo';
 import { useAuthStore } from '@/store/authStore';
 import { useNetworkStore } from '@/store/networkStore';
 
@@ -33,7 +35,7 @@ export default function SplashScreen() {
       } else {
         navigation.replace('Auth', { screen: 'Login' });
       }
-    }, 1200);
+    }, 1600);
 
     return () => clearTimeout(timer);
   }, [isInitialized, isAuthenticated, backendChecked, navigation]);
@@ -41,41 +43,41 @@ export default function SplashScreen() {
   const backendOk = healthStatus === 'connected';
 
   return (
-    <View style={styles.container}>
-      <View style={styles.logoWrap}>
-        <Ionicons name="school" size={48} color={colors.primary} />
-      </View>
-      <Text style={styles.title}>SmartStudy</Text>
-      <Text style={styles.subtitle}>Study smarter, score higher</Text>
-
-      <View style={styles.statusRow}>
-        {backendChecked ? (
-          <>
-            <Ionicons
-              name={backendOk ? 'cloud-done-outline' : 'cloud-offline-outline'}
-              size={16}
-              color={backendOk ? colors.success : colors.error}
-            />
-            <Text style={[styles.statusText, backendOk ? styles.statusOk : styles.statusBad]}>
-              {healthMessage}
-            </Text>
-          </>
-        ) : (
-          <>
-            <ActivityIndicator size={14} color={colors.primary} />
-            <Text style={styles.statusText}>Checking backend…</Text>
-          </>
-        )}
+    <SafeAreaView style={styles.container}>
+      <View style={styles.hero}>
+        <AppLogo size="splash" />
       </View>
 
-      {__DEV__ && backendChecked ? (
-        <Text style={styles.devHint} numberOfLines={2}>
-          {ENV.RUNTIME_PLATFORM} · {ENV.API_URL}
-        </Text>
-      ) : null}
+      <View style={styles.footer}>
+        <View style={styles.statusRow}>
+          {backendChecked ? (
+            <>
+              <Ionicons
+                name={backendOk ? 'cloud-done-outline' : 'cloud-offline-outline'}
+                size={16}
+                color={backendOk ? colors.success : colors.error}
+              />
+              <Text style={[styles.statusText, backendOk ? styles.statusOk : styles.statusBad]}>
+                {healthMessage}
+              </Text>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator size={14} color={colors.primary} />
+              <Text style={styles.statusText}>Connecting to server…</Text>
+            </>
+          )}
+        </View>
 
-      <ActivityIndicator size="small" color={colors.primary} style={styles.loader} />
-    </View>
+        {__DEV__ && backendChecked ? (
+          <Text style={styles.devHint} numberOfLines={2}>
+            {ENV.RUNTIME_PLATFORM} · {ENV.API_URL}
+          </Text>
+        ) : null}
+
+        <ActivityIndicator size="small" color={colors.primary} style={styles.loader} />
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -83,33 +85,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+  },
+  hero: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: spacing.xl,
   },
-  logoWrap: {
-    width: 96,
-    height: 96,
-    borderRadius: 28,
-    backgroundColor: colors.primaryLight,
+  footer: {
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-  },
-  title: {
-    ...typography.h1,
-    color: colors.text,
-  },
-  subtitle: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    marginTop: spacing.lg,
     paddingHorizontal: spacing.md,
   },
   statusText: {
@@ -132,6 +123,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   loader: {
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
   },
 });

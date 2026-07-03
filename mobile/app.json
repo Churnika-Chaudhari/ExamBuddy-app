@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "SmartStudy",
-    "slug": "smartstudy",
+    "name": "ExamBuddy",
+    "slug": "exambuddy",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -13,11 +13,15 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#FFFFFF"
+        "backgroundColor": "#4A90D9"
       },
       "package": "com.smartstudy.app",
       "versionCode": 1,
-      "usesCleartextTraffic": true
+      "usesCleartextTraffic": true,
+      "navigationBar": {
+        "backgroundColor": "#FFFFFF",
+        "barStyle": "dark-content"
+      }
     },
     "newArchEnabled": false,
     "web": {
@@ -32,7 +36,8 @@
         {
           "image": "./assets/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#FFFFFF"
+          "backgroundColor": "#FFFFFF",
+          "imageWidth": 280
         }
       ]
     ]

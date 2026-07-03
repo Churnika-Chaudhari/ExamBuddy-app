@@ -12,5 +12,7 @@ if (!process.env.EXPO_PUBLIC_API_URL?.trim()) {
 
 process.env.EXPO_PUBLIC_API_FORCE = 'true';
 process.env.APK_OUTPUT_NAME = process.env.APK_OUTPUT_NAME || DEFAULT_APK_NAME;
+process.env.APK_BUILD_VARIANT = 'release';
+process.env.EXPO_PREBUILD = '1';
 
 require('./build-apk-local.js');

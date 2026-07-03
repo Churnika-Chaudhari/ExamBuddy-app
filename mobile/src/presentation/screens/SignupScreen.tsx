@@ -7,7 +7,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { colors, spacing, typography } from '@/core/theme';
 import type { AuthStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
-import ScreenWrapper from '@/presentation/components/ScreenWrapper';
+import ScreenWrapper, { HEADERLESS_SCREEN_EDGES } from '@/presentation/components/ScreenWrapper';
 import { getErrorMessage } from '@/data/api/client';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -51,7 +51,7 @@ export default function SignupScreen() {
   };
 
   return (
-    <ScreenWrapper>
+    <ScreenWrapper edges={HEADERLESS_SCREEN_EDGES}>
       <View style={styles.header}>
         <Text style={styles.title}>Create account</Text>
         <Text style={styles.subtitle}>Start analyzing PYQs with AI</Text>

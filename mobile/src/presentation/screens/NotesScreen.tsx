@@ -6,12 +6,14 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, spacing, typography } from '@/core/theme';
+import { moderateScale } from '@/core/theme/responsive';
 import { notesApi, subjectsApi } from '@/data/api/endpoints';
 import type { GeneratedTopicNote, Note, QuizSubject } from '@/domain/types';
 import type { RootStackParamList } from '@/navigation/types';
 import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
 import NoteTypeBadge from '@/presentation/components/NoteTypeBadge';
+import ScreenWrapper, { TAB_SCREEN_EDGES } from '@/presentation/components/ScreenWrapper';
 import TopicTags from '@/presentation/components/TopicTags';
 import { useNotesStore } from '@/store/notesStore';
 
@@ -194,14 +196,17 @@ export default function NotesScreen() {
 
   if (isLoading && !listData.length && !refreshing) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      <ScreenWrapper scrollable={false} padded={false} edges={TAB_SCREEN_EDGES}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </ScreenWrapper>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <ScreenWrapper scrollable={false} padded={false} edges={TAB_SCREEN_EDGES}>
+      <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={styles.title}>My Notes</Text>
@@ -239,24 +244,23 @@ export default function NotesScreen() {
           />
         }
       />
-    </View>
+      </View>
+    </ScreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   centered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.background,
   },
   header: {
     padding: spacing.md,
-    paddingTop: spacing.lg,
+    paddingBottom: spacing.sm,
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
@@ -294,6 +298,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     paddingTop: 0,
     flexGrow: 1,
+    paddingBottom: spacing.lg,
   },
   noteCard: {
     padding: spacing.md,
@@ -359,7 +364,8 @@ const styles = StyleSheet.create({
     paddingRight: spacing.md,
   },
   subjectCard: {
-    width: 150,
+    width: moderateScale(148),
+    minHeight: moderateScale(120),
     padding: spacing.md,
   },
   subjectIcon: {

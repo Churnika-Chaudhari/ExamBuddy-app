@@ -6,10 +6,11 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, spacing, typography } from '@/core/theme';
+import { fontScale } from '@/core/theme/responsive';
 import type { RootStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
 import AppCard from '@/presentation/components/AppCard';
-import ScreenWrapper from '@/presentation/components/ScreenWrapper';
+import ScreenWrapper, { TAB_SCREEN_EDGES } from '@/presentation/components/ScreenWrapper';
 import { profileApi } from '@/data/api/endpoints';
 import { useAuthStore } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
@@ -67,7 +68,7 @@ export default function ProfileScreen() {
     .slice(0, 2) ?? 'SS';
 
   return (
-    <ScreenWrapper>
+    <ScreenWrapper edges={TAB_SCREEN_EDGES}>
       <View style={styles.profileHeader}>
         <Avatar.Text
           size={72}
@@ -160,7 +161,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   avatarLabel: {
-    fontSize: 28,
+    fontSize: fontScale(28),
     fontWeight: '600',
   },
   name: {

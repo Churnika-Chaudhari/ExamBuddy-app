@@ -11,6 +11,7 @@ import type { RootStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
 import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
+import ScreenWrapper from '@/presentation/components/ScreenWrapper';
 import { useDocumentStore } from '@/store/documentStore';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -123,14 +124,17 @@ export default function UploadedDocumentsScreen() {
 
   if (isLoading && !documents.length) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      <ScreenWrapper scrollable={false}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </ScreenWrapper>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <ScreenWrapper scrollable={false} padded={false}>
+      <View style={styles.container}>
       <FlatList
         data={documents}
         keyExtractor={(item) => item.id}
@@ -176,23 +180,21 @@ export default function UploadedDocumentsScreen() {
           icon="cloud-upload-outline"
         />
       </View>
-    </View>
+      </View>
+    </ScreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   centered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.background,
   },
   header: {
-    paddingTop: spacing.lg,
     paddingBottom: spacing.sm,
     flexDirection: 'row',
     alignItems: 'flex-start',

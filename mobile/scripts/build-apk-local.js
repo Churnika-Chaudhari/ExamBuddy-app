@@ -8,6 +8,8 @@ const sdk = path.join(process.env.LOCALAPPDATA || '', 'Android', 'Sdk');
 const gradleHome = process.env.GRADLE_USER_HOME || 'D:\\gradle';
 const tmpDir = process.env.TEMP || path.join(mobileDir, '.tmp');
 const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://10.167.199.44:8000/api/v1';
+const buildVariant = process.env.APK_BUILD_VARIANT === 'release' ? 'release' : 'debug';
+const assembleTask = buildVariant === 'release' ? 'assembleRelease' : 'assembleDebug';
 
 fs.mkdirSync(gradleHome, { recursive: true });
 fs.mkdirSync(tmpDir, { recursive: true });
@@ -33,6 +35,7 @@ console.log('ANDROID_HOME:', sdk);
 console.log('GRADLE_USER_HOME:', gradleHome);
 console.log('TEMP/TMP:', tmpDir);
 console.log('API URL:', apiUrl);
+console.log('Build variant:', buildVariant);
 console.log('');
 
 function run(cmd, args, cwd) {
@@ -43,10 +46,15 @@ function run(cmd, args, cwd) {
 }
 
 console.log('Step 1/2: Generating native Android project (expo prebuild)...');
-if (!fs.existsSync(path.join(mobileDir, 'android'))) {
-  run('npx', ['expo', 'prebuild', '--platform', 'android', '--no-install'], mobileDir);
+const shouldPrebuild = process.env.EXPO_PREBUILD === '1' || !fs.existsSync(path.join(mobileDir, 'android'));
+if (shouldPrebuild) {
+  const prebuildArgs = ['expo', 'prebuild', '--platform', 'android', '--no-install'];
+  if (process.env.EXPO_PREBUILD === '1') {
+    prebuildArgs.push('--clean');
+  }
+  run('npx', prebuildArgs, mobileDir);
 } else {
-  console.log('Android folder exists — skipping prebuild');
+  console.log('Android folder exists — skipping prebuild (set EXPO_PREBUILD=1 to refresh native assets)');
 }
 
 const gradleProps = path.join(mobileDir, 'android', 'gradle.properties');
@@ -88,7 +96,7 @@ run(
     '-g',
     gradleHome,
     'clean',
-    'assembleDebug',
+    assembleTask,
     '-x',
     'lint',
     '-x',
@@ -98,7 +106,15 @@ run(
   androidDir
 );
 
-const apkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
+const apkPath = path.join(
+  androidDir,
+  'app',
+  'build',
+  'outputs',
+  'apk',
+  buildVariant,
+  buildVariant === 'release' ? 'app-release.apk' : 'app-debug.apk'
+);
 const shareDir = path.join(mobileDir, 'dist');
 const apkOutputName = process.env.APK_OUTPUT_NAME || 'SmartStudy.apk';
 const shareApk = path.join(shareDir, apkOutputName);

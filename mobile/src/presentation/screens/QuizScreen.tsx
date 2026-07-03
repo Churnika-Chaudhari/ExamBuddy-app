@@ -1,17 +1,19 @@
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { Text, ActivityIndicator, Menu, Chip, SegmentedButtons } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, radius, spacing, typography } from '@/core/theme';
+import { moderateScale } from '@/core/theme/responsive';
 import { getErrorMessage } from '@/data/api/client';
 import type { Quiz, QuizDifficulty, QuizSubject } from '@/domain/types';
 import type { RootStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
 import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
+import ScreenWrapper, { TAB_SCREEN_EDGES } from '@/presentation/components/ScreenWrapper';
 import { useQuizStore } from '@/store/quizStore';
 import { useUIStore } from '@/store/uiStore';
 
@@ -166,138 +168,140 @@ export default function QuizScreen() {
 
   const canGenerate = Boolean(selectedSubject) && !isGenerating;
 
-  return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Quiz Generator</Text>
-          <Text style={styles.subtitle}>
-            Subjects are loaded automatically from your uploaded PYQ papers
+  const listHeader = (
+    <>
+      <View style={styles.header}>
+        <Text style={styles.title}>Quiz Generator</Text>
+        <Text style={styles.subtitle}>
+          Subjects are loaded automatically from your uploaded PYQ papers
+        </Text>
+      </View>
+
+      <AppCard style={styles.configCard}>
+        <Text style={styles.fieldLabel}>Subject</Text>
+        <Menu
+          visible={menuOpen}
+          onDismiss={() => setMenuOpen(false)}
+          anchor={
+            <AppButton
+              label={selectedSubject?.name ?? 'Select Subject'}
+              mode="outlined"
+              onPress={() => setMenuOpen(true)}
+              icon="chevron-down"
+              style={styles.dropdownBtn}
+            />
+          }
+        >
+          {subjects.length === 0 ? (
+            <Menu.Item title="No subjects — upload PYQs first" disabled />
+          ) : (
+            subjects.map((s) => (
+              <View key={s.id} style={styles.menuRow}>
+                <Pressable
+                  style={styles.menuSelect}
+                  onPress={() => {
+                    setSelectedSubject(s);
+                    setMenuOpen(false);
+                  }}
+                >
+                  <Text style={styles.menuName} numberOfLines={1}>
+                    {s.name}
+                  </Text>
+                  <Text style={styles.menuMeta}>
+                    {s.topic_count} topics · {s.pyq_count} PYQs
+                  </Text>
+                </Pressable>
+                <Pressable
+                  hitSlop={8}
+                  onPress={() => confirmDeleteSubject(s)}
+                  style={styles.menuDelete}
+                >
+                  <Ionicons name="trash-outline" size={16} color={colors.error} />
+                </Pressable>
+              </View>
+            ))
+          )}
+        </Menu>
+
+        {selectedSubject ? (
+          <Text style={styles.subjectMeta}>
+            {selectedSubject.pyq_count} PYQ papers · {selectedSubject.topic_count} topics
           </Text>
+        ) : null}
+
+        <Text style={styles.fieldLabel}>Difficulty</Text>
+        <SegmentedButtons
+          value={difficulty}
+          onValueChange={(v) => setDifficulty(v as QuizDifficulty)}
+          buttons={DIFFICULTIES.map((d) => ({ value: d.value, label: d.label }))}
+          style={styles.segment}
+        />
+
+        <Text style={styles.fieldLabel}>Number of Questions</Text>
+        <View style={styles.countRow}>
+          {QUESTION_COUNTS.map((n) => (
+            <Chip
+              key={n}
+              selected={numQuestions === n}
+              onPress={() => setNumQuestions(n)}
+              style={styles.countChip}
+            >
+              {n}
+            </Chip>
+          ))}
         </View>
 
-        <AppCard style={styles.configCard}>
-          <Text style={styles.fieldLabel}>Subject</Text>
-          <Menu
-            visible={menuOpen}
-            onDismiss={() => setMenuOpen(false)}
-            anchor={
-              <AppButton
-                label={selectedSubject?.name ?? 'Select Subject'}
-                mode="outlined"
-                onPress={() => setMenuOpen(true)}
-                icon="chevron-down"
-                style={styles.dropdownBtn}
-              />
+        <AppButton
+          label="Generate Quiz"
+          onPress={handleGenerate}
+          loading={isGenerating}
+          disabled={!canGenerate}
+          icon="lightning-bolt"
+          style={styles.generateBtn}
+        />
+      </AppCard>
+
+      <View style={styles.quickRow}>
+        <AppButton
+          label="History"
+          mode="outlined"
+          onPress={() => navigation.navigate('QuizHistory')}
+          icon="time-outline"
+          style={styles.quickBtn}
+        />
+        <AppButton
+          label="Analysis"
+          mode="outlined"
+          onPress={() => {
+            if (!selectedSubject) {
+              showSnackbar('Select a subject first for subject-wise analysis', 'error');
+              return;
             }
-          >
-            {subjects.length === 0 ? (
-              <Menu.Item title="No subjects — upload PYQs first" disabled />
-            ) : (
-              subjects.map((s) => (
-                <View key={s.id} style={styles.menuRow}>
-                  <Pressable
-                    style={styles.menuSelect}
-                    onPress={() => {
-                      setSelectedSubject(s);
-                      setMenuOpen(false);
-                    }}
-                  >
-                    <Text style={styles.menuName} numberOfLines={1}>
-                      {s.name}
-                    </Text>
-                    <Text style={styles.menuMeta}>
-                      {s.topic_count} topics · {s.pyq_count} PYQs
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    hitSlop={8}
-                    onPress={() => confirmDeleteSubject(s)}
-                    style={styles.menuDelete}
-                  >
-                    <Ionicons name="trash-outline" size={16} color={colors.error} />
-                  </Pressable>
-                </View>
-              ))
-            )}
-          </Menu>
+            navigation.navigate('QuizAnalysis', { subject: selectedSubject.name });
+          }}
+          icon="analytics-outline"
+          style={styles.quickBtn}
+          disabled={!selectedSubject}
+        />
+      </View>
 
-          {selectedSubject ? (
-            <Text style={styles.subjectMeta}>
-              {selectedSubject.pyq_count} PYQ papers · {selectedSubject.topic_count} topics
-            </Text>
-          ) : null}
+      <View style={styles.recentHeader}>
+        <Text style={styles.sectionLabel}>Recent Quizzes</Text>
+        {quizzes.length > 0 ? (
+          <Pressable onPress={confirmClearAll} hitSlop={8} style={styles.clearAllBtn}>
+            <Ionicons name="trash-outline" size={14} color={colors.error} />
+            <Text style={styles.clearAllText}>Clear All</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </>
+  );
 
-          <Text style={styles.fieldLabel}>Difficulty</Text>
-          <SegmentedButtons
-            value={difficulty}
-            onValueChange={(v) => setDifficulty(v as QuizDifficulty)}
-            buttons={DIFFICULTIES.map((d) => ({ value: d.value, label: d.label }))}
-            style={styles.segment}
-          />
-
-          <Text style={styles.fieldLabel}>Number of Questions</Text>
-          <View style={styles.countRow}>
-            {QUESTION_COUNTS.map((n) => (
-              <Chip
-                key={n}
-                selected={numQuestions === n}
-                onPress={() => setNumQuestions(n)}
-                style={styles.countChip}
-              >
-                {n}
-              </Chip>
-            ))}
-          </View>
-
-          <AppButton
-            label="Generate Quiz"
-            onPress={handleGenerate}
-            loading={isGenerating}
-            disabled={!canGenerate}
-            icon="lightning-bolt"
-            style={styles.generateBtn}
-          />
-        </AppCard>
-
-        <View style={styles.quickRow}>
-          <AppButton
-            label="History"
-            mode="outlined"
-            onPress={() => navigation.navigate('QuizHistory')}
-            icon="time-outline"
-            style={styles.quickBtn}
-          />
-          <AppButton
-            label="Analysis"
-            mode="outlined"
-            onPress={() => {
-              if (!selectedSubject) {
-                showSnackbar('Select a subject first for subject-wise analysis', 'error');
-                return;
-              }
-              navigation.navigate('QuizAnalysis', { subject: selectedSubject.name });
-            }}
-            icon="analytics-outline"
-            style={styles.quickBtn}
-            disabled={!selectedSubject}
-          />
-        </View>
-
-        <View style={styles.recentHeader}>
-          <Text style={styles.sectionLabel}>Recent Quizzes</Text>
-          {quizzes.length > 0 ? (
-            <Pressable onPress={confirmClearAll} hitSlop={8} style={styles.clearAllBtn}>
-              <Ionicons name="trash-outline" size={14} color={colors.error} />
-              <Text style={styles.clearAllText}>Clear All</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </ScrollView>
-
+  return (
+    <ScreenWrapper scrollable={false} padded={false} edges={TAB_SCREEN_EDGES}>
       {isLoading && !quizzes.length ? (
-        <View style={styles.centeredInline}>
-          <ActivityIndicator size="small" color={colors.primary} />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : (
         <FlatList
@@ -308,6 +312,7 @@ export default function QuizScreen() {
           showsVerticalScrollIndicator={false}
           onRefresh={fetchQuizzes}
           refreshing={isLoading}
+          ListHeaderComponent={listHeader}
           ListEmptyComponent={
             <EmptyState
               icon="help-circle-outline"
@@ -317,21 +322,18 @@ export default function QuizScreen() {
           }
         />
       )}
-    </View>
+    </ScreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  centered: {
     flex: 1,
-    backgroundColor: colors.background,
-  },
-  scrollContent: {
-    paddingBottom: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   header: {
     padding: spacing.md,
-    paddingTop: spacing.lg,
     paddingBottom: 0,
   },
   title: {
@@ -366,7 +368,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
-    minWidth: 240,
+    width: '100%',
+    maxWidth: moderateScale(320),
   },
   menuSelect: {
     flex: 1,
@@ -400,7 +403,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   countChip: {
-    minWidth: 52,
+    flex: 1,
+    minWidth: moderateScale(48),
   },
   generateBtn: {
     marginTop: spacing.xs,
@@ -445,6 +449,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     paddingTop: 0,
     flexGrow: 1,
+    paddingBottom: spacing.lg,
   },
   quizCard: {
     padding: spacing.md,
@@ -465,6 +470,7 @@ const styles = StyleSheet.create({
   },
   quizInfo: {
     flex: 1,
+    minWidth: 0,
   },
   quizTitle: {
     ...typography.label,
@@ -474,9 +480,5 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: 2,
-  },
-  centeredInline: {
-    padding: spacing.lg,
-    alignItems: 'center',
   },
 });

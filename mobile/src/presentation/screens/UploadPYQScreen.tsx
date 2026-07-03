@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { MAX_PYQ_FILES } from '@/core/constants/upload';
 import { colors, radius, spacing, typography } from '@/core/theme';
+import { verticalScale } from '@/core/theme/responsive';
 import { getErrorMessage } from '@/data/api/client';
 import type { RootStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
@@ -196,7 +197,12 @@ export default function UploadPYQScreen() {
     (isUploading ? 'Uploading...' : isAnalyzing ? 'Analyzing...' : '');
 
   return (
-    <ScreenWrapper>
+    <ScreenWrapper scrollable={false}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
       <LoadingOverlay visible={isUploading || isAnalyzing} message={overlayMessage} />
 
       <Text style={styles.heading}>{copy.heading}</Text>
@@ -289,11 +295,16 @@ export default function UploadPYQScreen() {
         icon="upload"
         style={styles.button}
       />
+      </ScrollView>
     </ScreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: spacing.xl,
+  },
   heading: {
     ...typography.h2,
     color: colors.text,
@@ -326,7 +337,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   fileList: {
-    maxHeight: 280,
+    maxHeight: verticalScale(240),
     marginBottom: spacing.md,
   },
   fileRow: {

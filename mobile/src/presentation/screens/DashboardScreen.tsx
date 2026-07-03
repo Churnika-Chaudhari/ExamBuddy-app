@@ -12,7 +12,7 @@ import type { RootStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
 import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
-import ScreenWrapper from '@/presentation/components/ScreenWrapper';
+import ScreenWrapper, { TAB_SCREEN_EDGES } from '@/presentation/components/ScreenWrapper';
 import StatCard from '@/presentation/components/StatCard';
 import { useAuthStore } from '@/store/authStore';
 import { useDashboardStore } from '@/store/dashboardStore';
@@ -127,7 +127,7 @@ export default function DashboardScreen() {
   const activities = data?.recent_activity ?? [];
 
   return (
-    <ScreenWrapper refreshing={isLoading} onRefresh={fetchDashboard}>
+    <ScreenWrapper edges={TAB_SCREEN_EDGES} refreshing={isLoading} onRefresh={fetchDashboard}>
       <View style={styles.header}>
         <Text style={styles.greeting}>
           Hello, {user?.full_name?.split(' ')[0] ?? 'Student'}
@@ -274,7 +274,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   actionCard: {
-    width: '48%',
+    flexGrow: 1,
+    flexBasis: '46%',
+    minWidth: '46%',
+    maxWidth: '100%',
     padding: spacing.md,
   },
   actionIcon: {

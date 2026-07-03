@@ -1,8 +1,24 @@
 import React from 'react';
-import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 
 import { colors, spacing } from '@/core/theme';
+
+/** Tab screens: top inset only — bottom tab bar handles home indicator. */
+export const TAB_SCREEN_EDGES: Edge[] = ['top'];
+
+/** Auth and other headerless full-screen layouts. */
+export const HEADERLESS_SCREEN_EDGES: Edge[] = ['top', 'bottom'];
+
+/** Stack screens with a native header only need bottom inset. */
+export const STACK_SCREEN_EDGES: Edge[] = ['bottom'];
 
 interface ScreenWrapperProps {
   children: React.ReactNode;
@@ -10,6 +26,7 @@ interface ScreenWrapperProps {
   padded?: boolean;
   refreshing?: boolean;
   onRefresh?: () => void;
+  edges?: Edge[];
 }
 
 export default function ScreenWrapper({
@@ -18,13 +35,16 @@ export default function ScreenWrapper({
   padded = true,
   refreshing,
   onRefresh,
+  edges = STACK_SCREEN_EDGES,
 }: ScreenWrapperProps) {
   const content = (
-    <View style={[styles.inner, padded && styles.padded]}>{children}</View>
+    <View style={[scrollable ? styles.scrollInner : styles.flexInner, padded && styles.padded]}>
+      {children}
+    </View>
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
+    <SafeAreaView style={styles.safe} edges={edges}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -61,7 +81,10 @@ const styles = StyleSheet.create({
   scroll: {
     flexGrow: 1,
   },
-  inner: {
+  scrollInner: {
+    flexGrow: 1,
+  },
+  flexInner: {
     flex: 1,
   },
   padded: {

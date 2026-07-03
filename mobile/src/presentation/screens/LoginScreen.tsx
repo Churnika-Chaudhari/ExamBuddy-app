@@ -9,7 +9,8 @@ import { ENV } from '@/core/config/apiConfig';
 import { colors, spacing, typography } from '@/core/theme';
 import type { AuthStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
-import ScreenWrapper from '@/presentation/components/ScreenWrapper';
+import AppLogo from '@/presentation/components/AppLogo';
+import ScreenWrapper, { HEADERLESS_SCREEN_EDGES } from '@/presentation/components/ScreenWrapper';
 import { getErrorMessage } from '@/data/api/client';
 import { useAuthStore } from '@/store/authStore';
 import { useNetworkStore } from '@/store/networkStore';
@@ -63,7 +64,10 @@ export default function LoginScreen() {
   };
 
   return (
-    <ScreenWrapper>
+    <ScreenWrapper edges={HEADERLESS_SCREEN_EDGES}>
+      <View style={styles.logoRow}>
+        <AppLogo size="small" showWordmark />
+      </View>
       <View style={styles.header}>
         <Text style={styles.title}>Welcome back</Text>
         <Text style={styles.subtitle}>Sign in to continue your study journey</Text>
@@ -149,9 +153,14 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
+  logoRow: {
+    alignItems: 'center',
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
+  },
   header: {
-    marginTop: spacing.xxl,
-    marginBottom: spacing.xl,
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
   },
   title: {
     ...typography.h1,
