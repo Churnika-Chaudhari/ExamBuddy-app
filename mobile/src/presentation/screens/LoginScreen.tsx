@@ -73,33 +73,31 @@ export default function LoginScreen() {
         <Text style={styles.subtitle}>Sign in to continue your study journey</Text>
       </View>
 
-      <Pressable
-        style={[styles.backendBanner, backendOk ? styles.backendOk : styles.backendBad]}
-        onPress={() => runHealthCheck()}
-        disabled={isChecking}
-      >
-        <Ionicons
-          name={backendOk ? 'checkmark-circle' : 'alert-circle'}
-          size={18}
-          color={backendOk ? colors.success : colors.error}
-        />
-        <View style={styles.backendTextWrap}>
-          <Text style={styles.backendTitle}>
-            {isChecking ? 'Checking backend…' : healthMessage}
-          </Text>
-          {!backendOk && healthDetail ? (
-            <Text style={styles.backendDetail} numberOfLines={3}>
-              {healthDetail}
+      {!backendOk ? (
+        <Pressable
+          style={[styles.backendBanner, styles.backendBad]}
+          onPress={() => runHealthCheck()}
+          disabled={isChecking}
+        >
+          <Ionicons name="alert-circle" size={18} color={colors.error} />
+          <View style={styles.backendTextWrap}>
+            <Text style={styles.backendTitle}>
+              {isChecking ? 'Checking connection…' : 'Unable to reach server'}
             </Text>
-          ) : null}
-          {__DEV__ ? (
-            <Text style={styles.backendUrl} numberOfLines={1}>
-              {ENV.API_URL}
-            </Text>
-          ) : null}
-        </View>
-        <Text style={styles.retryText}>{isChecking ? '…' : 'Retry'}</Text>
-      </Pressable>
+            {!isChecking && healthDetail ? (
+              <Text style={styles.backendDetail} numberOfLines={3}>
+                {healthDetail}
+              </Text>
+            ) : null}
+            {__DEV__ ? (
+              <Text style={styles.backendUrl} numberOfLines={1}>
+                {ENV.API_URL}
+              </Text>
+            ) : null}
+          </View>
+          <Text style={styles.retryText}>{isChecking ? '…' : 'Retry'}</Text>
+        </Pressable>
+      ) : null}
 
       <View style={styles.form}>
         <TextInput
@@ -179,10 +177,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: spacing.md,
     borderWidth: 1,
-  },
-  backendOk: {
-    backgroundColor: colors.successLight,
-    borderColor: colors.successLight,
   },
   backendBad: {
     backgroundColor: colors.errorLight,

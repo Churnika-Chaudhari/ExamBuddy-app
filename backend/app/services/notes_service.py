@@ -161,10 +161,7 @@ class NotesService:
                 "AI returned empty notes. Check API key configuration and try Regenerate."
             )
 
-        note_doc = await self.generated_notes_repo.upsert(
-            user_id,
-            topic_key,
-            {
+        upsert_payload: dict[str, Any] = {
                 "user_id": self.generated_notes_repo.to_object_id(user_id),
                 "topic": topic,
                 "topic_key": topic_key,
@@ -182,7 +179,14 @@ class NotesService:
                 "ai_metadata": metadata,
                 "rag_sources": rag_sources[:10],
                 "generated_at": datetime.now(UTC),
-            },
+            }
+        if result.get("structured"):
+            upsert_payload["structured_notes"] = result["structured"]
+
+        note_doc = await self.generated_notes_repo.upsert(
+            user_id,
+            topic_key,
+            upsert_payload,
             analysis_id=analysis_id,
         )
 

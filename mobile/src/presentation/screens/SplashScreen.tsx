@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Text } from 'react-native-paper';
+import { ActivityIndicator } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ENV } from '@/core/config/apiConfig';
-import { colors, spacing, typography } from '@/core/theme';
+import { colors, spacing } from '@/core/theme';
 import type { RootStackParamList } from '@/navigation/types';
 import AppLogo from '@/presentation/components/AppLogo';
 import { useAuthStore } from '@/store/authStore';
@@ -18,7 +16,7 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'Splash'>;
 export default function SplashScreen() {
   const navigation = useNavigation<Nav>();
   const { initialize, isAuthenticated, isInitialized } = useAuthStore();
-  const { runHealthCheck, healthStatus, healthMessage } = useNetworkStore();
+  const { runHealthCheck } = useNetworkStore();
   const [backendChecked, setBackendChecked] = useState(false);
 
   useEffect(() => {
@@ -40,8 +38,6 @@ export default function SplashScreen() {
     return () => clearTimeout(timer);
   }, [isInitialized, isAuthenticated, backendChecked, navigation]);
 
-  const backendOk = healthStatus === 'connected';
-
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.hero}>
@@ -49,33 +45,7 @@ export default function SplashScreen() {
       </View>
 
       <View style={styles.footer}>
-        <View style={styles.statusRow}>
-          {backendChecked ? (
-            <>
-              <Ionicons
-                name={backendOk ? 'cloud-done-outline' : 'cloud-offline-outline'}
-                size={16}
-                color={backendOk ? colors.success : colors.error}
-              />
-              <Text style={[styles.statusText, backendOk ? styles.statusOk : styles.statusBad]}>
-                {healthMessage}
-              </Text>
-            </>
-          ) : (
-            <>
-              <ActivityIndicator size={14} color={colors.primary} />
-              <Text style={styles.statusText}>Connecting to server…</Text>
-            </>
-          )}
-        </View>
-
-        {__DEV__ && backendChecked ? (
-          <Text style={styles.devHint} numberOfLines={2}>
-            {ENV.RUNTIME_PLATFORM} · {ENV.API_URL}
-          </Text>
-        ) : null}
-
-        <ActivityIndicator size="small" color={colors.primary} style={styles.loader} />
+        <ActivityIndicator size="small" color={colors.primary} />
       </View>
     </SafeAreaView>
   );
@@ -96,33 +66,5 @@ const styles = StyleSheet.create({
   footer: {
     alignItems: 'center',
     paddingBottom: spacing.md,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md,
-  },
-  statusText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    flexShrink: 1,
-  },
-  statusOk: {
-    color: colors.success,
-    fontWeight: '600',
-  },
-  statusBad: {
-    color: colors.error,
-    fontWeight: '600',
-  },
-  devHint: {
-    ...typography.caption,
-    color: colors.textMuted,
-    marginTop: spacing.xs,
-    textAlign: 'center',
-  },
-  loader: {
-    marginTop: spacing.md,
   },
 });

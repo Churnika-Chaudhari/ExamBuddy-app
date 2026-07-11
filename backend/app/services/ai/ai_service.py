@@ -12,6 +12,11 @@ from app.services.ai.base_provider import (
 )
 from app.services.ai.local_analyzer import analyze_pyq_local
 from app.utils.topic_extractor import sanitize_analysis_result
+from app.services.ai.notes_structured import (
+    extract_structured_payload,
+    is_structured_notes_result,
+    structured_notes_to_markdown,
+)
 from app.services.ai.prompts import (
     NOTES_GENERATE_SYSTEM_PROMPT,
     NOTES_GENERATE_USER_PROMPT,
@@ -281,42 +286,54 @@ class AIService:
         content = f"""# {topic}
 
 ## Definition
-{topic} is a core {subject_label} concept that students must understand for university examinations.
+{topic} is a core {subject_label} concept examined in university theory and practical papers.{retrieved_hint}
 
 ## Introduction
-This topic is part of the {subject_label} syllabus and is frequently tested in previous year papers.{retrieved_hint}
+{topic} forms an important part of the {subject_label} syllabus. Understanding its purpose, working, and applications is essential for scoring well in exams.
 
-## Working / Concept
-Explain the underlying mechanism step by step — how {topic} works, why it exists, and how it interacts with related concepts.
+## Working / Process
+Explain step by step how {topic} operates — inputs, internal steps, outputs, and interaction with related concepts.
 
-## Key Components
+## Components
 - Primary building blocks of **{topic}**
-- Relationships between components
 - Role of each component in the overall system
+- How components communicate or depend on each other
 
 ## Advantages
-- Practical benefits in real systems and exam answers
+- Key benefits when {topic} is used in real systems
+- Why examiners expect students to mention these points
 
 ## Disadvantages
-- Limitations and trade-offs students should mention in exams
+- Limitations, trade-offs, and failure cases
+- Situations where {topic} is not the best choice
 
 ## Applications
-- Industry and academic use cases where {topic} applies
+- Industry and academic scenarios where {topic} is applied
+- Typical exam-style application questions
 
 ## Example
-A concrete engineering example demonstrating {topic} in practice.
+A concrete engineering example demonstrating {topic} with brief explanation.
 
-## Important Exam Points
-- Standard definitions examiners expect
-- Common comparison and numerical questions
+## Interview Questions
+### Q1. What is {topic}?
+**Answer:** Core definition and purpose in one or two sentences.
 
-## Quick Revision
-- One-line definition of {topic}
-- Three must-remember points
-- One typical exam question pattern
+## Viva Questions
+### Q1. Define {topic}.
+**Answer:** Standard textbook definition.
 
-## Memory Trick
-Create a simple acronym linking the key points of {topic}.
+## Exam Tips
+- Write the formal definition first in exams
+- Include one diagram or flow if applicable
+- Compare with the closest related concept when asked
+
+## Keywords
+- {topic}
+- {subject_label}
+- definitions, working, applications
+
+## Summary
+Revise definition, working, components, advantages, disadvantages, and one example for {topic}.
 
 Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI-generated notes."""
         meta: dict[str, Any] = {
@@ -330,7 +347,21 @@ Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI-generated notes
             "summary": f"Structured notes for {topic}. Configure AI keys for RAG-enhanced generation.",
         }, meta
 
-    def _normalize_topic_result(self, result: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_topic_result(self, result: dict[str, Any], *, topic: str = "") -> dict[str, Any]:
+        structured: dict[str, Any] | None = None
+
+        if is_structured_notes_result(result):
+            structured = extract_structured_payload(result)
+            if topic and not structured.get("topic"):
+                structured["topic"] = topic
+            notes = structured_notes_to_markdown(structured)
+            summary = clean_notes_markdown(str(structured.get("summary") or result.get("summary") or "")).strip()
+            return {
+                "notes": clean_notes_markdown(notes),
+                "summary": summary or None,
+                "structured": structured,
+            }
+
         notes = (
             result.get("notes")
             or result.get("content")
@@ -341,7 +372,7 @@ Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI-generated notes
             notes = str(notes)
         notes = clean_notes_markdown(str(notes))
         summary = clean_notes_markdown(str(result.get("summary") or "")).strip()
-        return {"notes": notes, "summary": summary or None}
+        return {"notes": notes, "summary": summary or None, "structured": None}
 
     async def generate_topic_notes(
         self,
@@ -376,11 +407,13 @@ Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI-generated notes
                 user_prompt,
                 max_output_tokens=GEMINI_MAX_NOTES_TOKENS,
             )
-            result = self._normalize_topic_result(result)
+            result = self._normalize_topic_result(result, topic=topic)
             if rag_sources:
                 metadata["rag_sources"] = rag_sources[:8]
                 metadata["rag_chunk_count"] = len(rag_sources)
             metadata["generation_mode"] = "rag" if rag_context.strip() else "ai_only"
+            if result.get("structured"):
+                metadata["structured_notes"] = result["structured"]
             if not result.get("notes"):
                 raise ExternalServiceError("AI returned empty notes content")
             return result, metadata
@@ -394,6 +427,39 @@ Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI-generated notes
             if rag_sources:
                 meta["rag_sources"] = rag_sources[:8]
             return result, meta
+
+    def _normalize_batch_notes_result(
+        self,
+        result: dict[str, Any],
+        topics: list[str],
+    ) -> dict[str, Any]:
+        topic_notes = result.get("topic_notes")
+        if isinstance(topic_notes, list) and topic_notes:
+            sections: list[str] = []
+            for entry in topic_notes:
+                if isinstance(entry, dict) and is_structured_notes_result(entry):
+                    sections.append(structured_notes_to_markdown(entry))
+                elif isinstance(entry, dict):
+                    title = entry.get("topic") or "Topic"
+                    body = entry.get("notes") or entry.get("content") or ""
+                    if body:
+                        sections.append(f"# {title}\n\n{body}")
+            if sections:
+                content = clean_notes_markdown("\n\n".join(sections))
+                return {
+                    "title": result.get("title") or "Generated Notes",
+                    "content": content,
+                    "summary": clean_notes_markdown(str(result.get("summary") or "")).strip() or None,
+                    "topics": result.get("topics") or topics,
+                }
+
+        content = result.get("content") or result.get("notes") or ""
+        return {
+            "title": result.get("title") or "Generated Notes",
+            "content": clean_notes_markdown(str(content)),
+            "summary": clean_notes_markdown(str(result.get("summary") or "")).strip() or None,
+            "topics": result.get("topics") or topics,
+        }
 
     async def generate_notes(
         self,
@@ -410,11 +476,12 @@ Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI-generated notes
             context=context[:30000] or "No prior analysis context.",
         )
         try:
-            return await self._generate_json_with_fallback(
+            result, metadata = await self._generate_json_with_fallback(
                 NOTES_GENERATE_SYSTEM_PROMPT,
                 user_prompt,
                 max_output_tokens=GEMINI_MAX_NOTES_TOKENS,
             )
+            return self._normalize_batch_notes_result(result, topics), metadata
         except Exception as exc:
             logger.error("Notes generation failed, using local template: %s", exc)
             return self._local_notes_result(topics, context, subject)

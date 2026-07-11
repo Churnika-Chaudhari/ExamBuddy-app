@@ -14,6 +14,7 @@ def map_generated_note(doc: dict[str, Any], *, cached: bool = False) -> dict[str
         "topic": doc.get("topic", ""),
         "notes": doc.get("notes", "") or "",
         "summary": doc.get("summary"),
+        "structured_notes": doc.get("structured_notes"),
         "subject": doc.get("subject"),
         "unit": doc.get("unit"),
         "frequency": doc.get("frequency"),
