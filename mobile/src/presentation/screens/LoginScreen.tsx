@@ -5,7 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
-import { ENV } from '@/core/config/apiConfig';
+import { ENV, isRemoteProductionApi } from '@/core/config/apiConfig';
 import { colors, spacing, typography } from '@/core/theme';
 import type { AuthStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
@@ -44,7 +44,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     clearError();
-    if (!backendOk) {
+    if (!backendOk && !isRemoteProductionApi()) {
       showSnackbar(healthDetail ?? healthMessage ?? 'Backend is not reachable', 'error');
       return;
     }
@@ -82,7 +82,11 @@ export default function LoginScreen() {
           <Ionicons name="alert-circle" size={18} color={colors.error} />
           <View style={styles.backendTextWrap}>
             <Text style={styles.backendTitle}>
-              {isChecking ? 'Checking connection…' : 'Unable to reach server'}
+              {isChecking
+                ? 'Connecting to server…'
+                : isRemoteProductionApi()
+                  ? 'Server is waking up or offline'
+                  : 'Unable to reach server'}
             </Text>
             {!isChecking && healthDetail ? (
               <Text style={styles.backendDetail} numberOfLines={3}>

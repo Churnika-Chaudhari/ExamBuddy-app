@@ -136,6 +136,19 @@ export const ENV = {
   METRO_HOST: getMetroDevHost(),
 };
 
+/** True when the app targets a deployed HTTPS API (e.g. Render), not local dev. */
+export function isRemoteProductionApi(): boolean {
+  return /^https:\/\//i.test(ENV.API_URL) && !/localhost|127\.0\.0\.1/i.test(ENV.API_URL);
+}
+
+export function getHealthCheckTimeoutMs(): number {
+  return isRemoteProductionApi() ? 45000 : 8000;
+}
+
+export function getHealthCheckAttempts(): number {
+  return isRemoteProductionApi() ? 3 : 1;
+}
+
 if (__DEV__) {
   // eslint-disable-next-line no-console
   console.log('[SmartStudy] Runtime:', ENV.RUNTIME_PLATFORM);

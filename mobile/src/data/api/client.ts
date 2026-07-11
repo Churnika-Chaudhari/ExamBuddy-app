@@ -1,7 +1,7 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-import { ENV } from '@/core/config/apiConfig';
+import { ENV, isRemoteProductionApi } from '@/core/config/apiConfig';
 import type { ApiError, ApiResponse } from '@/domain/types';
 
 const TOKEN_KEY = 'access_token';
@@ -175,6 +175,13 @@ export function getErrorMessage(error: unknown): string {
 
 function classifyNetworkError(error: AxiosError): string {
   const target = error.config?.baseURL ?? ENV.API_URL;
+
+  if (isRemoteProductionApi()) {
+    return (
+      'Cannot reach the exam server. Free hosting may need 30–60 seconds to wake up — ' +
+      'check your internet and try again.'
+    );
+  }
 
   if (
     (target.includes('localhost') || target.includes('127.0.0.1')) &&

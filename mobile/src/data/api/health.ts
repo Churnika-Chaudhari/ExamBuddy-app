@@ -1,6 +1,11 @@
 import axios, { AxiosError } from 'axios';
 
-import { ENV } from '@/core/config/apiConfig';
+import {
+  ENV,
+  getHealthCheckAttempts,
+  getHealthCheckTimeoutMs,
+  isRemoteProductionApi,
+} from '@/core/config/apiConfig';
 
 export type HealthStatus = 'checking' | 'connected' | 'offline' | 'timeout' | 'invalid_url' | 'error';
 
@@ -11,7 +16,29 @@ export interface HealthCheckResult {
   latencyMs?: number;
 }
 
-export async function checkBackendHealth(timeoutMs = 8000): Promise<HealthCheckResult> {
+function remoteUnreachableDetail(): string {
+  return (
+    'The exam server may be waking up (free hosting can take 30–60 seconds). ' +
+    'Check your internet connection, wait a moment, then tap Retry.'
+  );
+}
+
+function devUnreachableDetail(): string {
+  return (
+    `Cannot reach ${ENV.HEALTH_URL}. Start the backend from the project root: npm run backend. ` +
+    'Ensure your phone and PC share the same Wi-Fi.'
+  );
+}
+
+function unreachableDetail(): string {
+  return isRemoteProductionApi() ? remoteUnreachableDetail() : devUnreachableDetail();
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function checkBackendHealthOnce(timeoutMs: number): Promise<HealthCheckResult> {
   const started = Date.now();
 
   try {
@@ -34,7 +61,9 @@ export async function checkBackendHealth(timeoutMs = 8000): Promise<HealthCheckR
       return {
         status: 'error',
         message: 'Health endpoint not found',
-        detail: `GET ${ENV.HEALTH_URL} returned 404. Update or restart the backend.`,
+        detail: isRemoteProductionApi()
+          ? 'The deployed API is missing /health. Redeploy the latest backend on Render.'
+          : `GET ${ENV.HEALTH_URL} returned 404. Update or restart the backend.`,
         latencyMs,
       };
     }
@@ -50,6 +79,28 @@ export async function checkBackendHealth(timeoutMs = 8000): Promise<HealthCheckR
   }
 }
 
+export async function checkBackendHealth(timeoutMs?: number): Promise<HealthCheckResult> {
+  const effectiveTimeout = timeoutMs ?? getHealthCheckTimeoutMs();
+  const attempts = getHealthCheckAttempts();
+  let lastResult: HealthCheckResult | null = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    lastResult = await checkBackendHealthOnce(effectiveTimeout);
+    if (lastResult.status === 'connected') {
+      return lastResult;
+    }
+    if (attempt < attempts) {
+      await sleep(3000);
+    }
+  }
+
+  return lastResult ?? {
+    status: 'error',
+    message: 'Health check failed',
+    detail: unreachableDetail(),
+  };
+}
+
 function mapHealthError(error: unknown, elapsedMs: number): HealthCheckResult {
   if (axios.isAxiosError(error)) {
     const ax = error as AxiosError;
@@ -57,8 +108,10 @@ function mapHealthError(error: unknown, elapsedMs: number): HealthCheckResult {
     if (ax.code === 'ECONNABORTED' || ax.message.toLowerCase().includes('timeout')) {
       return {
         status: 'timeout',
-        message: 'Connection timed out',
-        detail: `No response from ${ENV.HEALTH_URL} within ${elapsedMs}ms. Backend may be offline or blocked by firewall.`,
+        message: isRemoteProductionApi() ? 'Server is waking up' : 'Connection timed out',
+        detail: isRemoteProductionApi()
+          ? `No response within ${Math.round(elapsedMs / 1000)}s. ${remoteUnreachableDetail()}`
+          : `No response from ${ENV.HEALTH_URL} within ${elapsedMs}ms. Backend may be offline.`,
       };
     }
 
@@ -74,8 +127,8 @@ function mapHealthError(error: unknown, elapsedMs: number): HealthCheckResult {
 
       return {
         status: 'offline',
-        message: 'Server offline or unreachable',
-        detail: `Cannot reach ${ENV.HEALTH_URL}. Start backend: npm run backend. Ensure phone and PC share the same Wi-Fi.`,
+        message: isRemoteProductionApi() ? 'Cannot reach exam server' : 'Server offline or unreachable',
+        detail: unreachableDetail(),
       };
     }
 
