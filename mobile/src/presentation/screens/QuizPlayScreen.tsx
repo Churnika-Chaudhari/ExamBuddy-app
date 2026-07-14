@@ -49,6 +49,10 @@ export default function QuizPlayScreen() {
   const progress = ((currentIndex + 1) / questions.length) * 100;
   const qType = current.question_type === 'mixed' ? 'mcq' : current.question_type;
   const hasAnswer = Boolean(answers[current.id]?.trim());
+  const subjectLabel =
+    activeQuiz.subject?.trim() ||
+    activeQuiz.title?.replace(/\s*—?\s*Quiz$/i, '').trim() ||
+    'General';
 
   const selectAnswer = (answer: string) => {
     setAnswers((prev) => ({ ...prev, [current.id]: answer }));
@@ -78,10 +82,11 @@ export default function QuizPlayScreen() {
             <Text style={styles.progressText}>
               Question {currentIndex + 1} of {questions.length}
             </Text>
-            {activeQuiz.subject ? (
-              <Text style={styles.subject}>{activeQuiz.subject}</Text>
-            ) : null}
+            <Text style={styles.subject}>{subjectLabel}</Text>
           </View>
+          <Text style={styles.quizTitle} numberOfLines={1}>
+            {activeQuiz.title}
+          </Text>
           <View style={styles.progressBar}>
             <View style={[styles.progressFill, { width: `${progress}%` }]} />
           </View>
@@ -197,7 +202,14 @@ const styles = StyleSheet.create({
   subject: {
     ...typography.caption,
     color: colors.primary,
-    fontWeight: '600',
+    fontWeight: '700',
+    maxWidth: '50%',
+    textAlign: 'right',
+  },
+  quizTitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
   },
   progressBar: {
     height: 6,

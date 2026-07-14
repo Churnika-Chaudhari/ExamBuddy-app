@@ -32,7 +32,7 @@ export type RootStackParamList = {
   QuizPlay: { quizId: string };
   QuizResult: { quizId: string };
   QuizSubjectSelect: undefined;
-  QuizConfig: { subject: string };
+  QuizConfig: { subject: string; subjectId: string };
   QuizHistory: undefined;
   QuizAnalysis: { subject: string };
   QuizAttemptReview: { attemptId: string };

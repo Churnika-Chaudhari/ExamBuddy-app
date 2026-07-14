@@ -29,7 +29,11 @@ interface QuizState {
 
   fetchQuizzes: (subject?: string) => Promise<void>;
   fetchSubjects: () => Promise<QuizSubject[]>;
-  fetchSubjectTopics: (subjectId: string) => Promise<SubjectTopic[]>;
+  fetchSubjectTopics: (subjectId: string) => Promise<{
+    topics: SubjectTopic[];
+    subject: string;
+    analysisIds: string[];
+  }>;
   deleteSubject: (subjectId: string) => Promise<void>;
   generateQuiz: (params: QuizGenerateParams) => Promise<Quiz>;
   loadQuiz: (id: string) => Promise<Quiz>;
@@ -89,12 +93,17 @@ export const useQuizStore = create<QuizState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const { data } = await quizApi.getSubjectTopics(subjectId);
+      const payload = data.data;
       set({
-        subjectTopics: data.data.topics,
-        selectedSubject: data.data.subject,
+        subjectTopics: payload.topics,
+        selectedSubject: payload.subject,
         isLoading: false,
       });
-      return data.data.topics;
+      return {
+        topics: payload.topics,
+        subject: payload.subject,
+        analysisIds: payload.analysis_ids ?? [],
+      };
     } catch (error) {
       set({ error: getErrorMessage(error), isLoading: false });
       throw error;

@@ -93,10 +93,16 @@ class SubjectService:
         return [self._map_subject(s) for s in subjects if s.get("name")]
 
     async def get_subject_topics(self, user_id: str, subject_id: str) -> dict[str, Any]:
-        subject_doc = await self.subject_repo.get_by_id_and_user(subject_id, user_id)
-        if not subject_doc:
-            from app.core.exceptions import NotFoundError
+        from bson import ObjectId
 
+        from app.core.exceptions import NotFoundError
+
+        if ObjectId.is_valid(subject_id):
+            subject_doc = await self.subject_repo.get_by_id_and_user(subject_id, user_id)
+        else:
+            subject_doc = await self.subject_repo.get_by_name(user_id, subject_id)
+
+        if not subject_doc:
             raise NotFoundError("Subject not found")
 
         subject_name = subject_doc.get("name", "")

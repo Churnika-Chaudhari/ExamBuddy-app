@@ -1,18 +1,18 @@
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
-import { Text, ActivityIndicator, Menu, Chip, SegmentedButtons } from 'react-native-paper';
+import { Alert, FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text, ActivityIndicator, Chip, SegmentedButtons } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, radius, spacing, typography } from '@/core/theme';
-import { moderateScale } from '@/core/theme/responsive';
 import { getErrorMessage } from '@/data/api/client';
 import type { Quiz, QuizDifficulty, QuizSubject } from '@/domain/types';
 import type { RootStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
 import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
+import LoadingOverlay from '@/presentation/components/LoadingOverlay';
 import ScreenWrapper, { TAB_SCREEN_EDGES } from '@/presentation/components/ScreenWrapper';
 import { useQuizStore } from '@/store/quizStore';
 import { useUIStore } from '@/store/uiStore';
@@ -26,6 +26,12 @@ const DIFFICULTIES: { value: QuizDifficulty; label: string }[] = [
 ];
 
 const QUESTION_COUNTS = [10, 20, 30];
+
+function quizSubjectLabel(quiz: Quiz): string {
+  if (quiz.subject?.trim()) return quiz.subject.trim();
+  const fromTitle = quiz.title?.replace(/\s*—?\s*Quiz$/i, '').trim();
+  return fromTitle || 'General';
+}
 
 export default function QuizScreen() {
   const navigation = useNavigation<Nav>();
@@ -44,10 +50,10 @@ export default function QuizScreen() {
   } = useQuizStore();
   const showSnackbar = useUIStore((s) => s.showSnackbar);
 
-  const [menuOpen, setMenuOpen] = useState(false);
   const [selectedSubject, setSelectedSubject] = useState<QuizSubject | null>(null);
   const [difficulty, setDifficulty] = useState<QuizDifficulty>('medium');
   const [numQuestions, setNumQuestions] = useState(10);
+  const [generatingLabel, setGeneratingLabel] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -57,22 +63,26 @@ export default function QuizScreen() {
   );
 
   const handleGenerate = async () => {
-    if (!selectedSubject) return;
+    if (!selectedSubject?.name) return;
     try {
-      const topics = await fetchSubjectTopics(selectedSubject.id);
+      setGeneratingLabel(`Generating ${selectedSubject.name} quiz…`);
+      const { topics, subject, analysisIds } = await fetchSubjectTopics(selectedSubject.id);
       const topicNames = topics.map((t) => t.topic);
       const quiz = await generateQuiz({
-        subject: selectedSubject.name,
+        subject: subject || selectedSubject.name,
+        analysis_id: analysisIds[0],
         topics: topicNames,
         difficulty,
         num_questions: numQuestions,
         quiz_type: 'mixed',
-        title: `${selectedSubject.name} Quiz`,
+        title: `${subject || selectedSubject.name} Quiz`,
       });
-      showSnackbar('Quiz generated!', 'success');
+      showSnackbar(`${quizSubjectLabel(quiz)} quiz generated!`, 'success');
       navigation.navigate('QuizPlay', { quizId: quiz.id });
     } catch (err) {
       showSnackbar(getErrorMessage(err), 'error');
+    } finally {
+      setGeneratingLabel(null);
     }
   };
 
@@ -150,11 +160,13 @@ export default function QuizScreen() {
           <Ionicons name="help-circle" size={22} color={colors.primary} />
         </View>
         <View style={styles.quizInfo}>
+          <Text style={styles.quizSubject} numberOfLines={1}>
+            {quizSubjectLabel(item)}
+          </Text>
           <Text style={styles.quizTitle} numberOfLines={1}>
             {item.title}
           </Text>
           <Text style={styles.quizMeta}>
-            {item.subject ? `${item.subject} · ` : ''}
             {item.total_questions} questions
             {item.difficulty ? ` · ${item.difficulty}` : ''}
           </Text>
@@ -166,10 +178,12 @@ export default function QuizScreen() {
     </AppCard>
   );
 
-  const canGenerate = Boolean(selectedSubject) && !isGenerating;
+  const canGenerate = Boolean(selectedSubject?.name) && !isGenerating;
 
   const listHeader = (
     <>
+      <LoadingOverlay visible={isGenerating} message={generatingLabel ?? 'Generating quiz…'} />
+
       <View style={styles.header}>
         <Text style={styles.title}>Quiz Generator</Text>
         <Text style={styles.subtitle}>
@@ -179,54 +193,47 @@ export default function QuizScreen() {
 
       <AppCard style={styles.configCard}>
         <Text style={styles.fieldLabel}>Subject</Text>
-        <Menu
-          visible={menuOpen}
-          onDismiss={() => setMenuOpen(false)}
-          anchor={
-            <AppButton
-              label={selectedSubject?.name ?? 'Select Subject'}
-              mode="outlined"
-              onPress={() => setMenuOpen(true)}
-              icon="chevron-down"
-              style={styles.dropdownBtn}
-            />
-          }
-        >
-          {subjects.length === 0 ? (
-            <Menu.Item title="No subjects — upload PYQs first" disabled />
-          ) : (
-            subjects.map((s) => (
-              <View key={s.id} style={styles.menuRow}>
-                <Pressable
-                  style={styles.menuSelect}
-                  onPress={() => {
-                    setSelectedSubject(s);
-                    setMenuOpen(false);
-                  }}
-                >
-                  <Text style={styles.menuName} numberOfLines={1}>
+        {subjects.length === 0 ? (
+          <Text style={styles.noSubjects}>No subjects yet — upload and analyze PYQ papers first</Text>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.subjectRow}
+          >
+            {subjects.map((s) => {
+              const active = selectedSubject?.id === s.id;
+              return (
+                <View key={s.id} style={styles.subjectChipWrap}>
+                  <Chip
+                    selected={active}
+                    onPress={() => setSelectedSubject(s)}
+                    style={[styles.subjectChip, active && styles.subjectChipActive]}
+                    textStyle={active ? styles.subjectChipTextActive : styles.subjectChipText}
+                  >
                     {s.name}
-                  </Text>
-                  <Text style={styles.menuMeta}>
-                    {s.topic_count} topics · {s.pyq_count} PYQs
-                  </Text>
-                </Pressable>
-                <Pressable
-                  hitSlop={8}
-                  onPress={() => confirmDeleteSubject(s)}
-                  style={styles.menuDelete}
-                >
-                  <Ionicons name="trash-outline" size={16} color={colors.error} />
-                </Pressable>
-              </View>
-            ))
-          )}
-        </Menu>
+                  </Chip>
+                  <Pressable hitSlop={8} onPress={() => confirmDeleteSubject(s)} style={styles.chipDelete}>
+                    <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                  </Pressable>
+                </View>
+              );
+            })}
+          </ScrollView>
+        )}
 
         {selectedSubject ? (
-          <Text style={styles.subjectMeta}>
-            {selectedSubject.pyq_count} PYQ papers · {selectedSubject.topic_count} topics
-          </Text>
+          <View style={styles.selectedSubjectBox}>
+            <Ionicons name="school-outline" size={18} color={colors.primary} />
+            <View style={styles.selectedSubjectInfo}>
+              <Text style={styles.selectedSubjectName}>{selectedSubject.name}</Text>
+              <Text style={styles.selectedSubjectMeta}>
+                {selectedSubject.pyq_count} PYQ papers · {selectedSubject.topic_count} topics
+              </Text>
+            </View>
+          </View>
+        ) : subjects.length > 0 ? (
+          <Text style={styles.pickHint}>Tap a subject above to start</Text>
         ) : null}
 
         <Text style={styles.fieldLabel}>Difficulty</Text>
@@ -252,7 +259,11 @@ export default function QuizScreen() {
         </View>
 
         <AppButton
-          label="Generate Quiz"
+          label={
+            selectedSubject?.name
+              ? `Generate ${selectedSubject.name} Quiz`
+              : 'Generate Quiz'
+          }
           onPress={handleGenerate}
           loading={isGenerating}
           disabled={!canGenerate}
@@ -273,7 +284,7 @@ export default function QuizScreen() {
           label="Analysis"
           mode="outlined"
           onPress={() => {
-            if (!selectedSubject) {
+            if (!selectedSubject?.name) {
               showSnackbar('Select a subject first for subject-wise analysis', 'error');
               return;
             }
@@ -281,7 +292,7 @@ export default function QuizScreen() {
           }}
           icon="analytics-outline"
           style={styles.quickBtn}
-          disabled={!selectedSubject}
+          disabled={!selectedSubject?.name}
         />
       </View>
 
@@ -360,38 +371,64 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     marginTop: spacing.sm,
   },
-  dropdownBtn: {
-    justifyContent: 'flex-start',
+  noSubjects: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
   },
-  menuRow: {
+  subjectRow: {
+    gap: spacing.sm,
+    paddingRight: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  subjectChipWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    width: '100%',
-    maxWidth: moderateScale(320),
   },
-  menuSelect: {
-    flex: 1,
-    paddingVertical: spacing.xs,
+  subjectChip: {
+    backgroundColor: colors.surface,
   },
-  menuName: {
-    ...typography.bodySmall,
+  subjectChipActive: {
+    backgroundColor: colors.primaryLight,
+  },
+  subjectChipText: {
     color: colors.text,
-    fontWeight: '600',
   },
-  menuMeta: {
+  subjectChipTextActive: {
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  chipDelete: {
+    marginLeft: -6,
+    marginRight: spacing.xs,
+  },
+  selectedSubjectBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.primaryLight,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  selectedSubjectInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  selectedSubjectName: {
+    ...typography.label,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  selectedSubjectMeta: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  pickHint: {
     ...typography.caption,
     color: colors.textMuted,
-    marginTop: 1,
-  },
-  menuDelete: {
-    padding: spacing.sm,
-  },
-  subjectMeta: {
-    ...typography.caption,
-    color: colors.primary,
-    marginTop: spacing.xs,
     marginBottom: spacing.sm,
   },
   segment: {
@@ -404,7 +441,6 @@ const styles = StyleSheet.create({
   },
   countChip: {
     flex: 1,
-    minWidth: moderateScale(48),
   },
   generateBtn: {
     marginTop: spacing.xs,
@@ -472,9 +508,16 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  quizSubject: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
   quizTitle: {
     ...typography.label,
     color: colors.text,
+    marginTop: 2,
   },
   quizMeta: {
     ...typography.caption,

@@ -32,8 +32,10 @@ export default function QuizSubjectSelectScreen() {
 
   const handleContinue = () => {
     if (!selected) return;
+    const subject = subjects.find((s) => s.name === selected);
+    if (!subject) return;
     setSelectedSubject(selected);
-    navigation.navigate('QuizConfig', { subject: selected });
+    navigation.navigate('QuizConfig', { subject: subject.name, subjectId: subject.id });
   };
 
   const renderSubject = ({ item }: { item: QuizSubject }) => {

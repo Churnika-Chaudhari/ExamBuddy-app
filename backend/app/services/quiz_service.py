@@ -16,8 +16,9 @@ from app.repositories.quiz_repository import (
 )
 from app.repositories.stats_repository import StatsRepository
 from app.services.ai.ai_service import AIService
-from app.services.mappers import map_document_response
+from app.services.mappers import map_document_response, map_quiz_response
 from app.utils.topic_extractor import filter_topics
+from app.utils.subject_detector import resolve_document_subject
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +223,23 @@ class QuizService:
 
         all_topic_names = filter_topics(list(dict.fromkeys(all_topic_names)))[:25]
 
+        docs = await self.document_repo.list_by_user(user_id, skip=0, limit=300)
+        for doc in docs:
+            doc_subject = _normalize_subject(
+                resolve_document_subject(
+                    explicit_subject=doc.get("subject"),
+                    filename=doc.get("title"),
+                    title=doc.get("title"),
+                )
+                or ""
+            )
+            if doc_subject.lower() != subject.lower():
+                continue
+            extracted = (doc.get("extracted_text") or "").strip()
+            if extracted:
+                label = doc.get("title") or "Reference material"
+                content_parts.append(f"{label}:\n{extracted[:6000]}")
+
         gen_notes = await self.generated_notes_repo.list_by_user(user_id, limit=100)
         for note in gen_notes:
             note_subject = _normalize_subject(note.get("subject") or "")
@@ -335,7 +353,7 @@ class QuizService:
                 "timestamp": now,
             },
         )
-        return map_document_response(quiz)
+        return map_quiz_response(quiz)
 
     async def list_quizzes(
         self,
@@ -351,13 +369,13 @@ class QuizService:
             query["subject"] = subject
         quizzes = await self.quiz_repo.list_by_user(user_id, skip=skip, limit=limit, subject=subject)
         total = await self.quiz_repo.count(query)
-        return [map_document_response(quiz) for quiz in quizzes], total
+        return [map_quiz_response(quiz) for quiz in quizzes], total
 
     async def get_quiz(self, quiz_id: str, user_id: str) -> dict[str, Any]:
         quiz = await self.quiz_repo.get_by_id_and_user(quiz_id, user_id)
         if not quiz:
             raise NotFoundError("Quiz not found")
-        return map_document_response(quiz)
+        return map_quiz_response(quiz)
 
     def _grade_answer(self, user_answer: str, correct_answer: str, question_type: str) -> bool:
         user = user_answer.strip().lower()

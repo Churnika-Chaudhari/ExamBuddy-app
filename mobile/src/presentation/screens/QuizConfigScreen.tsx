@@ -37,7 +37,7 @@ const QUESTION_COUNTS = [5, 10, 15, 20];
 export default function QuizConfigScreen() {
   const route = useRoute<Route>();
   const navigation = useNavigation<Nav>();
-  const { subject } = route.params;
+  const { subject, subjectId } = route.params;
 
   const { subjectTopics, isLoading, isGenerating, fetchSubjectTopics, generateQuiz } =
     useQuizStore();
@@ -46,18 +46,20 @@ export default function QuizConfigScreen() {
   const [quizType, setQuizType] = useState<QuizQuestionType>('mixed');
   const [difficulty, setDifficulty] = useState<QuizDifficulty>('medium');
   const [numQuestions, setNumQuestions] = useState(10);
+  const [analysisId, setAnalysisId] = useState<string | undefined>();
 
   useEffect(() => {
-    fetchSubjectTopics(subject).catch((err) =>
-      showSnackbar(getErrorMessage(err), 'error')
-    );
-  }, [subject, fetchSubjectTopics, showSnackbar]);
+    fetchSubjectTopics(subjectId)
+      .then(({ analysisIds }) => setAnalysisId(analysisIds[0]))
+      .catch((err) => showSnackbar(getErrorMessage(err), 'error'));
+  }, [subjectId, fetchSubjectTopics, showSnackbar]);
 
   const handleGenerate = async () => {
     try {
       const topics = subjectTopics.map((t) => t.topic);
       const quiz = await generateQuiz({
         subject,
+        analysis_id: analysisId,
         topics,
         quiz_type: quizType,
         difficulty,

@@ -24,6 +24,28 @@ def map_user_response(user: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def map_quiz_response(quiz: dict[str, Any]) -> dict[str, Any]:
+    serialized = serialize_doc(quiz)
+    if not serialized:
+        return {}
+    if "source_notes_id" in quiz and quiz.get("source_notes_id"):
+        serialized["source_notes_id"] = str(quiz["source_notes_id"])
+    if "source_analysis_id" in quiz and quiz.get("source_analysis_id"):
+        serialized["source_analysis_id"] = str(quiz["source_analysis_id"])
+    if "quiz_id" in quiz and quiz.get("quiz_id"):
+        serialized["quiz_id"] = str(quiz["quiz_id"])
+    subject = (quiz.get("subject") or "").strip()
+    if subject:
+        serialized["subject"] = subject
+    title = (quiz.get("title") or "").strip()
+    serialized["title"] = title or (f"{subject} Quiz" if subject else "Generated Quiz")
+    if quiz.get("difficulty") is not None:
+        serialized["difficulty"] = str(quiz["difficulty"])
+    if quiz.get("quiz_type") is not None:
+        serialized["quiz_type"] = str(quiz["quiz_type"])
+    return serialized
+
+
 def map_document_response(document: dict[str, Any]) -> dict[str, Any]:
     serialized = serialize_doc(document)
     if not serialized:
