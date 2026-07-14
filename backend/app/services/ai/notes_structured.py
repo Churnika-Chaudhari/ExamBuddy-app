@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from app.services.ai.notes_sanitizer import sanitize_note_text, sanitize_rag_passage
 
 STRUCTURED_NOTE_FIELDS = (
     "topic",
     "definition",
+    "conceptualExplanation",
+    "conceptual_explanation",
+    "practicalExamples",
+    "practical_examples",
     "introduction",
     "background",
     "working",
@@ -38,9 +42,12 @@ def is_structured_notes_result(data: dict[str, Any]) -> bool:
     markers = (
         "definition",
         "introduction",
+        "conceptualExplanation",
+        "conceptual_explanation",
         "working",
         "components",
         "advantages",
+        "practicalExamples",
         "interviewQuestions",
         "vivaQuestions",
     )
@@ -51,7 +58,7 @@ def _as_text(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return value.strip()
+        return sanitize_note_text(value.strip())
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, dict):
@@ -201,36 +208,75 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
     lines.append("")
 
 
+def _build_conceptual_explanation(data: dict[str, Any]) -> str:
+    direct = _as_text(
+        data.get("conceptualExplanation")
+        or data.get("conceptual_explanation")
+        or data.get("concept")
+    )
+    if direct:
+        return direct
+
+    parts: list[str] = []
+    for key in (
+        "introduction",
+        "background",
+        "working",
+        "process",
+        "architecture",
+        "architectureFlow",
+        "diagram",
+    ):
+        text = _as_text(data.get(key))
+        if text:
+            parts.append(text)
+
+    for key in ("components", "types", "features"):
+        bullets = _as_bullets(data.get(key))
+        if bullets:
+            parts.append("\n".join(f"- {b}" for b in bullets))
+
+    return "\n\n".join(parts).strip()
+
+
+def _build_practical_examples(data: dict[str, Any]) -> str:
+    direct = _as_text(
+        data.get("practicalExamples")
+        or data.get("practical_examples")
+        or data.get("examples")
+    )
+    if direct:
+        return direct
+
+    parts: list[str] = []
+    example = _as_text(data.get("example"))
+    if example:
+        parts.append(example)
+    apps = _as_bullets(data.get("applications"))
+    if apps:
+        parts.extend(f"- {a}" for a in apps)
+    return "\n\n".join(parts).strip()
+
+
 def structured_notes_to_markdown(data: dict[str, Any]) -> str:
-    """Render professor-style structured JSON into markdown for the mobile renderer."""
+    """Render clean exam-oriented structured JSON into markdown."""
     topic = _as_text(data.get("topic") or data.get("title") or "Study Topic")
     lines: list[str] = [f"# {topic}"]
 
     priority = _as_text(data.get("exam_priority") or data.get("examPriority"))
-    if priority or "⭐" in _as_text(data.get("frequently_asked")):
+    if priority and "frequently" in priority.lower():
         lines.extend(["⭐ Frequently Asked in Exams", ""])
 
     _append_section(lines, "Definition", data.get("definition"))
-    _append_section(lines, "Introduction", data.get("introduction"))
-    _append_section(lines, "Background", data.get("background"))
-    _append_section(lines, "Working / Process", data.get("working") or data.get("process"))
-    _append_section(
-        lines,
-        "Architecture / Flow",
-        data.get("architecture") or data.get("architectureFlow"),
-    )
 
-    diagram = _as_text(data.get("diagram"))
-    if diagram:
-        lines.extend(["## Diagram", diagram, ""])
+    conceptual = _build_conceptual_explanation(data)
+    _append_section(lines, "Conceptual Explanation", conceptual)
 
-    _append_bullet_section(lines, "Components", data.get("components"))
-    _append_bullet_section(lines, "Types / Classification", data.get("types"))
-    _append_bullet_section(lines, "Features", data.get("features"))
+    practical = _build_practical_examples(data)
+    _append_section(lines, "Practical Examples", practical)
+
     _append_bullet_section(lines, "Advantages", data.get("advantages"))
     _append_bullet_section(lines, "Disadvantages", data.get("disadvantages"))
-    _append_bullet_section(lines, "Applications", data.get("applications"))
-    _append_section(lines, "Example", data.get("example"))
     _append_comparison(lines, data.get("comparison"))
     _append_qa_section(
         lines,
@@ -242,18 +288,11 @@ def structured_notes_to_markdown(data: dict[str, Any]) -> str:
         "Viva Questions",
         data.get("vivaQuestions") or data.get("viva_questions"),
     )
-    _append_bullet_section(
-        lines,
-        "Frequently Asked University Questions",
-        data.get("universityQuestions")
-        or data.get("frequentlyAskedUniversityQuestions")
-        or data.get("exam_questions"),
-    )
     _append_bullet_section(lines, "Exam Tips", data.get("examTips") or data.get("exam_tips"))
     _append_bullet_section(lines, "Keywords", data.get("keywords"))
     _append_section(lines, "Summary", data.get("summary"))
 
-    markdown = "\n".join(lines).strip()
+    markdown = sanitize_note_text("\n".join(lines).strip())
     return markdown
 
 

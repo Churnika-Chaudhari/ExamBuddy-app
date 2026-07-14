@@ -111,7 +111,7 @@ class NotesPipeline:
         if label:
             parts.append(f"Exam priority for this topic: {label}")
         parts.append(
-            "Write professor-quality textbook notes. Do NOT mention question numbers, "
-            "marks, CO numbers, or that content came from a question paper."
+            "Write clean textbook-quality notes. Never include file names, subject codes, "
+            "upload labels, or question-paper metadata in the output."
         )
         return "\n".join(p for p in parts if p).strip()

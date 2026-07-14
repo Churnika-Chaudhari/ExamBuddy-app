@@ -22,10 +22,13 @@ const ARROWS_RIGHT = /[→⇒⟶➡]/g;
 const ARROWS_LEFT = /[←⇐⟵]/g;
 const BOX_CHARS = /[─━│┌┐└┘├┤┬┴┼╔╗╚╝█▀▄▌▐░▒▓↑↓↕↔]/g;
 
+const METADATA_LINE =
+  /^\s*(\[Source\s+\d+:|>\s*FROM\s+UPLOADED|FROM\s+UPLOADED\s+DOCUMENTS|RETRIEVED\s+CONTENT|Subject\s*(Code|No\.?)\s*:?\s*\d{4,6}\s*$)/i;
+
 /**
  * Strip noise so only clean, important content is shown: removes control/
- * zero-width chars, markdown tables, ASCII diagrams, code fences, backticks
- * and stray special characters the simple renderer can't display.
+ * zero-width chars, markdown tables, ASCII diagrams, code fences, backticks,
+ * document metadata lines, and stray special characters.
  */
 function sanitizeContent(raw: string): string {
   if (!raw) return '';
@@ -36,6 +39,8 @@ function sanitizeContent(raw: string): string {
     let line = original.replace(/\s+$/, '');
     let stripped = line.trim();
 
+    if (!stripped) continue;
+    if (METADATA_LINE.test(stripped)) continue;
     if (stripped.startsWith('```') || stripped.startsWith('~~~')) continue;
     if (stripped.includes('-') && TABLE_SEPARATOR.test(stripped)) continue;
 

@@ -10,7 +10,7 @@ from app.services.ai.base_provider import (
     GeminiProvider,
     OpenAIProvider,
 )
-from app.services.ai.local_analyzer import analyze_pyq_local
+from app.services.ai.notes_sanitizer import sanitize_note_text
 from app.utils.topic_extractor import sanitize_analysis_result
 from app.services.ai.notes_structured import (
     extract_structured_payload,
@@ -97,7 +97,7 @@ def clean_notes_markdown(text: str) -> str:
 
     cleaned = "\n".join(out)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    return cleaned.strip()
+    return sanitize_note_text(cleaned.strip())
 
 
 def _friendly_ai_error(message: str) -> str:
@@ -279,63 +279,32 @@ class AIService:
         subject_label = subject or "Study"
         retrieved_hint = ""
         if rag_context.strip():
-            retrieved_hint = "\n\n_Based on retrieved content from your uploaded documents._\n"
-            excerpt = rag_context[:1500].replace("RETRIEVED CONTENT", "").strip()
-            retrieved_hint += f"\n> {excerpt[:800]}...\n"
+            retrieved_hint = "\n\nUse syllabus-standard knowledge aligned with your uploaded materials.\n"
 
         content = f"""# {topic}
 
 ## Definition
 {topic} is a core {subject_label} concept examined in university theory and practical papers.{retrieved_hint}
 
-## Introduction
-{topic} forms an important part of the {subject_label} syllabus. Understanding its purpose, working, and applications is essential for scoring well in exams.
+## Conceptual Explanation
+Explain what **{topic}** is, why it is used, and how it works step by step. Cover key components, rules, syntax, and relationships with related concepts.
 
-## Working / Process
-Explain step by step how {topic} operates — inputs, internal steps, outputs, and interaction with related concepts.
-
-## Components
-- Primary building blocks of **{topic}**
-- Role of each component in the overall system
-- How components communicate or depend on each other
+## Practical Examples
+Provide at least one concrete worked example demonstrating {topic} in practice (e.g. SQL queries, code snippet, or numerical illustration with explanation).
 
 ## Advantages
 - Key benefits when {topic} is used in real systems
-- Why examiners expect students to mention these points
 
 ## Disadvantages
-- Limitations, trade-offs, and failure cases
-- Situations where {topic} is not the best choice
-
-## Applications
-- Industry and academic scenarios where {topic} is applied
-- Typical exam-style application questions
-
-## Example
-A concrete engineering example demonstrating {topic} with brief explanation.
-
-## Interview Questions
-### Q1. What is {topic}?
-**Answer:** Core definition and purpose in one or two sentences.
-
-## Viva Questions
-### Q1. Define {topic}.
-**Answer:** Standard textbook definition.
+- Limitations and trade-offs students should mention in exams
 
 ## Exam Tips
 - Write the formal definition first in exams
-- Include one diagram or flow if applicable
+- Include one example with explanation
 - Compare with the closest related concept when asked
 
-## Keywords
-- {topic}
-- {subject_label}
-- definitions, working, applications
-
 ## Summary
-Revise definition, working, components, advantages, disadvantages, and one example for {topic}.
-
-Add OPENAI_API_KEY or GEMINI_API_KEY in backend .env for full AI-generated notes."""
+Revise definition, conceptual explanation, and one practical example for {topic}."""
         meta: dict[str, Any] = {
             "provider": "local",
             "model": "rule-based",

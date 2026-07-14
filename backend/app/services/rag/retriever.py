@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services.ai.base_provider import chunk_text
+from app.services.ai.notes_sanitizer import sanitize_rag_passage
 from app.utils.subject_detector import normalize_subject_name, resolve_document_subject
 from app.utils.watermark_filter import remove_watermarks_from_text
 
@@ -206,9 +207,11 @@ class DocumentRetriever:
         sources: list[dict[str, Any]] = []
         total = 0
 
-        for i, chunk in enumerate(selected, start=1):
-            header = f"[Source {i}: {chunk.source_title} ({chunk.source_category})]"
-            block = f"{header}\n{chunk.text.strip()}"
+        for chunk in selected:
+            cleaned = sanitize_rag_passage(chunk.text.strip())
+            if len(cleaned) < 40:
+                continue
+            block = cleaned
             if total + len(block) > _MAX_CONTEXT_CHARS:
                 break
             parts.append(block)
@@ -225,8 +228,5 @@ class DocumentRetriever:
                     }
                 )
 
-        context = (
-            "RETRIEVED CONTENT FROM UPLOADED DOCUMENTS (use as primary source):\n\n"
-            + "\n\n---\n\n".join(parts)
-        )
+        context = "\n\n---\n\n".join(parts) if parts else ""
         return context, sources
