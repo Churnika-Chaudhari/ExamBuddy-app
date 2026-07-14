@@ -4,13 +4,16 @@ Orchestrates PYQ → clean → topics → Gemini notes workflow.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from app.services.pipeline.text_preprocessor import PreprocessResult, preprocess_pyq_text
 from app.services.pipeline.topic_pipeline import extract_and_merge_topics
-from app.utils.topic_analysis import build_consolidated_analysis
 from app.utils.topic_extractor import sanitize_analysis_result
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,31 +37,66 @@ class NotesPipeline:
         *,
         subject: str | None = None,
         num_documents: int = 1,
+        preprocessed: PreprocessResult | None = None,
     ) -> dict[str, Any]:
         lines = question_lines or []
         result = extract_and_merge_topics(lines, num_documents=num_documents)
         if result:
             return result
-        # Fallback to legacy consolidated analyzer on full cleaned text
+
+        # Deferred import breaks cycle: topic_analysis → pipeline.text_preprocessor
+        from app.utils.topic_analysis import build_consolidated_analysis
+
         return build_consolidated_analysis(
             cleaned_text,
             subject=subject,
             num_documents=num_documents,
+            preprocessed=preprocessed,
         )
 
-    def run(self, raw_text: str, *, subject: str | None = None, num_documents: int = 1) -> PipelineResult:
-        preprocessed = self.preprocess(raw_text)
+    def run(
+        self,
+        raw_text: str,
+        *,
+        subject: str | None = None,
+        num_documents: int = 1,
+        preprocessed: PreprocessResult | None = None,
+    ) -> PipelineResult:
+        """Single preprocess pass — reuse *preprocessed* when text was already cleaned."""
+        if preprocessed is None:
+            preprocessed = self.preprocess(raw_text)
+        else:
+            logger.debug("Reusing cached preprocess result (%d chars)", len(preprocessed.cleaned_text))
+
         topic_analysis = self.extract_topics(
             preprocessed.cleaned_text,
             preprocessed.question_lines,
             subject=subject,
             num_documents=num_documents,
+            preprocessed=preprocessed,
         )
         return PipelineResult(
             cleaned_text=preprocessed.cleaned_text,
             question_lines=preprocessed.question_lines,
             topic_analysis=topic_analysis,
             preprocess_stats=preprocessed.stats,
+        )
+
+    async def run_async(
+        self,
+        raw_text: str,
+        *,
+        subject: str | None = None,
+        num_documents: int = 1,
+        preprocessed: PreprocessResult | None = None,
+    ) -> PipelineResult:
+        """CPU-bound pipeline in a thread pool — does not block the event loop."""
+        return await asyncio.to_thread(
+            self.run,
+            raw_text,
+            subject=subject,
+            num_documents=num_documents,
+            preprocessed=preprocessed,
         )
 
     def merge_ai_analysis(
@@ -100,7 +138,9 @@ class NotesPipeline:
         """Extra context injected into Gemini notes prompt."""
         parts: list[str] = []
         if analysis:
-            parts.append(analysis.get("summary") or "")
+            summary = (analysis.get("summary") or "").strip()
+            if summary:
+                parts.append(summary[:400])
             freq_table = analysis.get("topic_frequency_table") or []
             for row in freq_table:
                 if str(row.get("topic", "")).lower() == topic.lower():

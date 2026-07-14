@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -120,8 +119,7 @@ class AnalysisService:
                 raise ValidationAppError("No extractable text found in selected documents")
 
             subject = documents[0].get("subject")
-            pipeline_result = await asyncio.to_thread(
-                self.notes_pipeline.run,
+            pipeline_result = await self.notes_pipeline.run_async(
                 combined_text,
                 subject=subject,
                 num_documents=len(documents),

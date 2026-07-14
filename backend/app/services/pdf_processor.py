@@ -12,7 +12,7 @@ import logging
 from typing import Any
 
 from app.services.ai.base_provider import chunk_text
-from app.services.pipeline.notes_pipeline import NotesPipeline
+from app.services.pipeline.text_preprocessor import preprocess_pyq_text
 from app.utils.text_extractor import extract_text
 
 logger = logging.getLogger(__name__)
@@ -46,8 +46,7 @@ def extract_and_chunk_sync(file_bytes: bytes, file_type: str) -> dict[str, Any]:
             "chunks": [],
         }
 
-    pipeline = NotesPipeline()
-    preprocessed = pipeline.preprocess(raw_text)
+    preprocessed = preprocess_pyq_text(raw_text)
     cleaned_text = preprocessed.cleaned_text or raw_text
     chunks = build_text_chunks(cleaned_text)
 

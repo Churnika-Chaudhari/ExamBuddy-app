@@ -8,12 +8,13 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from app.services.pipeline.text_preprocessor import preprocess_pyq_text
 from app.utils.syllabus_concept_extractor import extract_concepts_from_questions
 from app.utils.topic_extractor import is_valid_topic
-from app.services.pipeline.topic_pipeline import extract_and_merge_topics, merge_similar_topics
+
+if TYPE_CHECKING:
+    from app.services.pipeline.text_preprocessor import PreprocessResult
 
 _QUESTION_PREFIX = re.compile(
     r"^(?:\d+[\).\]]|\([a-z]\)|[Qq]\d+[\).:]|[ivxIVX]+[\).\]])\s*",
@@ -88,8 +89,15 @@ def build_consolidated_analysis(
     *,
     subject: str | None = None,
     num_documents: int = 1,
+    preprocessed: PreprocessResult | None = None,
 ) -> dict[str, Any]:
-    preprocessed = preprocess_pyq_text(content)
+    # Import here to avoid circular import at module load time.
+    from app.services.pipeline.text_preprocessor import preprocess_pyq_text
+    from app.services.pipeline.topic_pipeline import extract_and_merge_topics, merge_similar_topics
+
+    if preprocessed is None:
+        preprocessed = preprocess_pyq_text(content)
+
     pipeline_result = extract_and_merge_topics(
         preprocessed.question_lines,
         num_documents=num_documents,
