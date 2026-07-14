@@ -14,6 +14,7 @@ from app.repositories.generated_notes_repository import (
 from app.repositories.notes_repository import NotesRepository
 from app.repositories.stats_repository import StatsRepository
 from app.services.ai.ai_service import AIService
+from app.services.llm_service import compact_analysis_context
 from app.services.ai.prompts import PROMPT_VERSION
 from app.services.generated_note_mapper import map_generated_note
 from app.services.pipeline.notes_pipeline import NotesPipeline
@@ -60,18 +61,7 @@ class NotesService:
         self.notes_pipeline = NotesPipeline()
 
     def _build_analysis_context(self, analysis: dict[str, Any]) -> str:
-        context = analysis.get("summary") or ""
-        if analysis.get("high_priority_topics"):
-            context += "\nHigh priority topics:\n" + str(analysis["high_priority_topics"])
-        if analysis.get("predicted_important_topics"):
-            context += "\nPredicted important topics:\n" + str(
-                analysis["predicted_important_topics"][:10]
-            )
-        if analysis.get("important_topics"):
-            context += "\nImportant topics:\n" + str(analysis["important_topics"])
-        if analysis.get("topic_frequency_table"):
-            context += "\nTopic frequency:\n" + str(analysis["topic_frequency_table"][:15])
-        return context
+        return compact_analysis_context(analysis)
 
     async def generate_topic_note(
         self,
@@ -89,17 +79,12 @@ class NotesService:
             raise ValidationAppError("Topic is required")
 
         topic_key = normalize_topic_key(topic)
-        analysis_context = ""
-        document_ids: list[str] = []
         analysis_doc: dict[str, Any] | None = None
 
         if analysis_id:
             analysis_doc = await self.analysis_repo.get_by_id_and_user(analysis_id, user_id)
             if not analysis_doc:
                 raise NotFoundError("Analysis not found")
-            analysis_context = self._build_analysis_context(analysis_doc)
-            subject = subject or analysis_doc.get("subject")
-            document_ids = [str(d) for d in analysis_doc.get("document_ids", [])]
 
         if not regenerate:
             cached = await self.generated_notes_repo.find_cached(
@@ -116,25 +101,17 @@ class NotesService:
         )
         preserve_saved = bool(existing and existing.get("is_saved"))
 
-        rag_context, rag_sources = await self.rag_retriever.retrieve_for_topic(
+        ctx = await self._prepare_topic_generation(
             user_id,
             topic,
-            subject=subject,
-            analysis_document_ids=document_ids or None,
+            analysis_id=analysis_id,
+            subject=subject or (analysis_doc.get("subject") if analysis_doc else None),
+            frequency=frequency,
         )
-
-        pipeline_context = ""
-        exam_priority = ""
-        if analysis_doc:
-            pipeline_context = self.notes_pipeline.build_notes_context(
-                topic, analysis_doc, frequency=frequency
-            )
-            if not frequency:
-                for row in analysis_doc.get("topic_frequency_table") or []:
-                    if str(row.get("topic", "")).lower() == topic.lower():
-                        frequency = int(row.get("frequency", 0))
-                        break
-            exam_priority = self.notes_pipeline.topic_frequency_label(frequency)
+        subject = ctx["subject"]
+        frequency = ctx["frequency"]
+        rag_context = ctx["rag_context"]
+        rag_sources = ctx["rag_sources"]
 
         logger.info(
             "Generating notes topic=%s user=%s rag_chunks=%d regenerate=%s",
@@ -147,11 +124,11 @@ class NotesService:
         result, metadata = await self.ai_service.generate_topic_notes(
             topic,
             rag_context=rag_context,
-            analysis_context=analysis_context,
+            analysis_context=ctx["analysis_context"],
             subject=subject,
             rag_sources=rag_sources,
-            pipeline_context=pipeline_context,
-            exam_priority=exam_priority,
+            pipeline_context=ctx["pipeline_context"],
+            exam_priority=ctx["exam_priority"],
         )
 
         notes_text = (result.get("notes") or result.get("content") or "").strip()
@@ -192,6 +169,91 @@ class NotesService:
 
         logger.info("Saved generated notes id=%s topic=%s", note_doc.get("_id"), topic)
         return map_generated_note(note_doc, cached=False)
+
+    async def _prepare_topic_generation(
+        self,
+        user_id: str,
+        topic: str,
+        *,
+        analysis_id: str | None = None,
+        subject: str | None = None,
+        frequency: int | None = None,
+    ) -> dict[str, Any]:
+        """Shared context gathering for generate + stream paths."""
+        analysis_context = ""
+        document_ids: list[str] = []
+        analysis_doc: dict[str, Any] | None = None
+
+        if analysis_id:
+            analysis_doc = await self.analysis_repo.get_by_id_and_user(analysis_id, user_id)
+            if not analysis_doc:
+                raise NotFoundError("Analysis not found")
+            analysis_context = self._build_analysis_context(analysis_doc)
+            subject = subject or analysis_doc.get("subject")
+            document_ids = [str(d) for d in analysis_doc.get("document_ids", [])]
+
+        rag_context, rag_sources = await self.rag_retriever.retrieve_for_topic(
+            user_id,
+            topic,
+            subject=subject,
+            analysis_document_ids=document_ids or None,
+        )
+
+        pipeline_context = ""
+        exam_priority = ""
+        if analysis_doc:
+            pipeline_context = self.notes_pipeline.build_notes_context(
+                topic, analysis_doc, frequency=frequency
+            )
+            if not frequency:
+                for row in analysis_doc.get("topic_frequency_table") or []:
+                    if str(row.get("topic", "")).lower() == topic.lower():
+                        frequency = int(row.get("frequency", 0))
+                        break
+            exam_priority = self.notes_pipeline.topic_frequency_label(frequency)
+
+        return {
+            "analysis_context": analysis_context,
+            "rag_context": rag_context,
+            "rag_sources": rag_sources,
+            "pipeline_context": pipeline_context,
+            "exam_priority": exam_priority,
+            "subject": subject,
+            "frequency": frequency,
+        }
+
+    async def stream_topic_note(
+        self,
+        user_id: str,
+        topic: str,
+        *,
+        analysis_id: str | None = None,
+        subject: str | None = None,
+        unit: str | None = None,
+        frequency: int | None = None,
+    ):
+        """Yield SSE-style JSON events with streamed note tokens."""
+        topic = topic.strip()
+        if not topic:
+            raise ValidationAppError("Topic is required")
+
+        ctx = await self._prepare_topic_generation(
+            user_id,
+            topic,
+            analysis_id=analysis_id,
+            subject=subject,
+            frequency=frequency,
+        )
+
+        async for token in self.ai_service.stream_topic_notes(
+            topic,
+            rag_context=ctx["rag_context"],
+            analysis_context=ctx["analysis_context"],
+            subject=ctx["subject"],
+            pipeline_context=ctx["pipeline_context"],
+            exam_priority=ctx["exam_priority"],
+        ):
+            yield token
 
     async def get_topic_cache_status(
         self,

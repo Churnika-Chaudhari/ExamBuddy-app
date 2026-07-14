@@ -14,10 +14,10 @@ from app.services.ai.notes_sanitizer import sanitize_rag_passage
 from app.utils.subject_detector import normalize_subject_name, resolve_document_subject
 from app.utils.watermark_filter import remove_watermarks_from_text
 
-_CHUNK_SIZE = 1800
-_CHUNK_OVERLAP = 200
-_MAX_CHUNKS = 14
-_MAX_CONTEXT_CHARS = 32000
+_CHUNK_SIZE = 1200
+_CHUNK_OVERLAP = 150
+_MAX_CHUNKS = 8
+_MAX_CONTEXT_CHARS = 10_000
 
 # Retrieval priority by source type: user notes first, then PYQs, then study
 # materials, then anything else. AI knowledge is only used when nothing is found.
@@ -162,16 +162,29 @@ class DocumentRetriever:
         ranked: list[RetrievedChunk] = []
 
         for doc in docs:
-            raw = doc.get("extracted_text") or ""
-            if not raw.strip():
-                continue
-            text = remove_watermarks_from_text(raw)
             title = doc.get("title") or "Untitled"
             category = doc.get("category") or "document"
             doc_id = str(doc["_id"])
             boost = _CATEGORY_BOOST.get(category, 2.0)
             if doc_id in analysis_set:
                 boost += 6.0
+
+            stored_chunks: list[str] = doc.get("text_chunks") or []
+            if stored_chunks:
+                for chunk in stored_chunks:
+                    if not chunk.strip():
+                        continue
+                    score = _score_chunk(chunk, terms, topic) + boost
+                    if score >= 2.0:
+                        ranked.append(
+                            RetrievedChunk(chunk, title, category, score, doc_id)
+                        )
+                continue
+
+            raw = doc.get("extracted_text") or ""
+            if not raw.strip():
+                continue
+            text = remove_watermarks_from_text(raw)
 
             for passage in _extract_topic_passages(text, topic, terms):
                 score = _score_chunk(passage, terms, topic) + boost

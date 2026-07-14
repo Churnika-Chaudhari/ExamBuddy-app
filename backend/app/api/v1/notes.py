@@ -1,7 +1,8 @@
 from typing import Annotated, Any
+import json
 
 from fastapi import APIRouter, Depends, Query, status
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from app.api.deps import get_notes_service
 from app.core.dependencies import get_current_user
@@ -91,6 +92,33 @@ async def regenerate_topic_notes(
         regenerate=True,
     )
     return success_response(data, "Notes regenerated successfully")
+
+
+@router.post(
+    "/topic/stream",
+    summary="Stream AI study notes tokens for a topic (SSE)",
+)
+async def stream_topic_notes(
+    payload: TopicNoteGenerateRequest,
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    notes_service: Annotated[NotesService, Depends(get_notes_service)],
+):
+    async def event_stream():
+        try:
+            async for token in notes_service.stream_topic_note(
+                str(current_user["_id"]),
+                payload.topic,
+                analysis_id=payload.analysis_id,
+                subject=payload.subject,
+                unit=payload.unit,
+                frequency=payload.frequency,
+            ):
+                yield f"data: {json.dumps({'token': token})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/topic/status", summary="Check if cached notes exist for a topic")

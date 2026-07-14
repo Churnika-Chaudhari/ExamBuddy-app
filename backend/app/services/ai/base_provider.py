@@ -77,6 +77,19 @@ class BaseAIProvider(ABC):
     ) -> tuple[str, dict[str, Any]]:
         pass
 
+    async def stream_text(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        max_output_tokens: int | None = None,
+    ):
+        """Default: fall back to non-streaming generate_text."""
+        content, _ = await self.generate_text(
+            system_prompt, user_prompt, max_output_tokens=max_output_tokens
+        )
+        yield content
+
 
 class OpenAIProvider(BaseAIProvider):
     def __init__(self, api_key: str, model: str) -> None:
@@ -137,6 +150,31 @@ class OpenAIProvider(BaseAIProvider):
             "tokens_used": response.usage.total_tokens if response.usage else None,
         }
         return content, metadata
+
+    async def stream_text(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        max_output_tokens: int | None = None,
+    ):
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=self.api_key)
+        stream = await client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+            max_tokens=max_output_tokens,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta
 
 
 class GeminiProvider(BaseAIProvider):
@@ -413,6 +451,44 @@ class GeminiProvider(BaseAIProvider):
             "tokens_used": None,
         }
         return content, metadata
+
+    async def stream_text(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        max_output_tokens: int | None = None,
+    ):
+        import google.generativeai as genai
+
+        genai.configure(api_key=self.api_key)
+        generation_config: dict[str, Any] = {
+            "temperature": 0.3,
+            "max_output_tokens": self._effective_max_tokens(self.model, max_output_tokens),
+            "response_mime_type": "application/json",
+        }
+        if self._supports_thinking(self.model):
+            generation_config["thinking_config"] = {"thinking_budget": 0}
+
+        try:
+            model = genai.GenerativeModel(
+                model_name=self.model,
+                system_instruction=system_prompt,
+                generation_config=generation_config,
+            )
+        except (TypeError, ValueError):
+            generation_config.pop("thinking_config", None)
+            model = genai.GenerativeModel(
+                model_name=self.model,
+                system_instruction=system_prompt,
+                generation_config=generation_config,
+            )
+
+        response = await model.generate_content_async(user_prompt, stream=True)
+        async for chunk in response:
+            text = getattr(chunk, "text", None) or ""
+            if text:
+                yield text
 
 
 def chunk_text(text: str, chunk_size: int = 12000, overlap: int = 500) -> list[str]:

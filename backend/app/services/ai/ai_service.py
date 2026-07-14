@@ -10,7 +10,9 @@ from app.services.ai.base_provider import (
     GeminiProvider,
     OpenAIProvider,
 )
+from app.services.ai.local_analyzer import analyze_pyq_local
 from app.services.ai.notes_sanitizer import sanitize_note_text
+from app.services.llm_service import LLMService, should_skip_pyq_llm
 from app.utils.topic_extractor import sanitize_analysis_result
 from app.services.ai.notes_structured import (
     extract_structured_payload,
@@ -118,6 +120,7 @@ class AIService:
         self._load_providers()
         self.ai_available = bool(self.providers)
         self.provider = self.providers[0][1] if self.providers else None
+        self.llm_service = LLMService()
 
     def _build_provider(self, provider_name: str) -> BaseAIProvider:
         if provider_name == "gemini":
@@ -219,16 +222,25 @@ class AIService:
                 for t in local_topics["syllabus_topics"][:30]
             )
 
+        if should_skip_pyq_llm(local_topics):
+            logger.info("PYQ analysis: using local pipeline only (skipping LLM validation)")
+            result = sanitize_analysis_result(local_topics or {})
+            metadata = {
+                "provider": "local",
+                "model": "pipeline",
+                "tokens_used": None,
+                "prompt_version": PROMPT_VERSION,
+                "llm_skipped": True,
+            }
+            return result, metadata
+
         if self.ai_available:
-            user_prompt = PYQ_ANALYSIS_USER_PROMPT.format(
-                subject=subject or "General",
-                num_documents=num_documents,
-                content=content[:50000],
-                extracted_topics=extracted_topics_hint or "None pre-extracted",
-            )
             try:
-                result, metadata = await self._generate_json_with_fallback(
-                    PYQ_ANALYSIS_SYSTEM_PROMPT, user_prompt
+                result, metadata = await self.llm_service.analyze_pyq_with_llm(
+                    content,
+                    subject,
+                    num_documents=num_documents,
+                    extracted_topics_hint=extracted_topics_hint or "None pre-extracted",
                 )
                 result = sanitize_analysis_result(result)
                 if local_topics and local_topics.get("topic_table"):
@@ -243,6 +255,7 @@ class AIService:
                         "syllabus_topics", "topic_frequency", "important_topics",
                     ):
                         result.setdefault(key, local.get(key, [] if key != "topic_frequency" else {}))
+                metadata["llm_skipped"] = False
                 return result, metadata
             except Exception as exc:
                 logger.error("PYQ analysis AI failed, falling back to local: %s", exc)
@@ -362,19 +375,14 @@ Revise definition, conceptual explanation, and one practical example for {topic}
                 meta["rag_sources"] = rag_sources[:8]
             return result, meta
 
-        user_prompt = TOPIC_NOTES_USER_PROMPT.format(
-            topic=topic,
-            subject=subject or "General",
-            exam_priority=exam_priority or "",
-            rag_context=rag_context[:28000] or "No retrieved document content available.",
-            analysis_context=analysis_context[:8000] or "No PYQ analysis context.",
-            pipeline_context=pipeline_context[:4000] or "",
-        )
         try:
-            result, metadata = await self._generate_json_with_fallback(
-                TOPIC_NOTES_SYSTEM_PROMPT,
-                user_prompt,
-                max_output_tokens=GEMINI_MAX_NOTES_TOKENS,
+            result, metadata = await self.llm_service.generate_topic_notes_json(
+                topic,
+                rag_context=rag_context,
+                analysis_context=analysis_context,
+                subject=subject,
+                pipeline_context=pipeline_context,
+                exam_priority=exam_priority,
             )
             result = self._normalize_topic_result(result, topic=topic)
             if rag_sources:
@@ -396,6 +404,27 @@ Revise definition, conceptual explanation, and one practical example for {topic}
             if rag_sources:
                 meta["rag_sources"] = rag_sources[:8]
             return result, meta
+
+    async def stream_topic_notes(
+        self,
+        topic: str,
+        *,
+        rag_context: str = "",
+        analysis_context: str = "",
+        subject: str | None = None,
+        pipeline_context: str = "",
+        exam_priority: str = "",
+    ):
+        """Stream LLM tokens for progressive notes rendering."""
+        async for token in self.llm_service.stream_topic_notes_tokens(
+            topic,
+            rag_context=rag_context,
+            analysis_context=analysis_context,
+            subject=subject,
+            pipeline_context=pipeline_context,
+            exam_priority=exam_priority,
+        ):
+            yield token
 
     def _normalize_batch_notes_result(
         self,
