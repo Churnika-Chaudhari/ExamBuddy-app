@@ -22,7 +22,7 @@ import { mergeFiles, pickMultiplePdfs } from '@/utils/pickDocuments';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'UploadPYQ'>;
 
-type DocCategory = 'pyq' | 'notes' | 'study_material';
+type DocCategory = 'pyq' | 'notes';
 
 const CATEGORY_COPY: Record<DocCategory, { heading: string; desc: string; noun: string }> = {
   pyq: {
@@ -32,13 +32,8 @@ const CATEGORY_COPY: Record<DocCategory, { heading: string; desc: string; noun: 
   },
   notes: {
     heading: 'Upload Notes',
-    desc: 'Add your notes PDFs. They become the top-priority source for AI study notes.',
+    desc: 'Add your notes PDFs. They appear in the Notes tab and are used as the top-priority source for AI study notes.',
     noun: 'notes PDF',
-  },
-  study_material: {
-    heading: 'Upload Study Material',
-    desc: 'Add textbooks or reference PDFs used as source material for notes.',
-    noun: 'document',
   },
 };
 
@@ -54,7 +49,6 @@ function buildTitle(files: PickedFile[], category: DocCategory): string {
   const labels: Record<DocCategory, string> = {
     pyq: 'PYQ Set',
     notes: 'Notes Set',
-    study_material: 'Study Material',
   };
   return `${labels[category]} (${files.length} files)`;
 }
@@ -124,13 +118,13 @@ export default function UploadPYQScreen() {
         subject: trimmedSubject || undefined,
       });
 
-      // Notes and study materials are RAG source material — upload only.
+      // Notes are RAG source material — upload only.
       if (category !== 'pyq') {
         showSnackbar(
-          `Uploaded ${docs.length} ${copy.noun}${docs.length > 1 ? 's' : ''}. Now available for notes.`,
+          `Uploaded ${docs.length} ${copy.noun}${docs.length > 1 ? 's' : ''}. View them in the Notes tab.`,
           'success'
         );
-        navigation.replace('UploadedDocuments');
+        navigation.replace('Main', { screen: 'Notes' });
         return;
       }
 
@@ -216,7 +210,6 @@ export default function UploadPYQScreen() {
         buttons={[
           { value: 'pyq', label: 'PYQ', icon: 'file-document-outline' },
           { value: 'notes', label: 'Notes', icon: 'note-text-outline' },
-          { value: 'study_material', label: 'Material', icon: 'book-open-variant' },
         ]}
       />
 

@@ -18,6 +18,7 @@ export type RootStackParamList = {
   Main: NavigatorScreenParams<MainTabParamList>;
   UploadPYQ: undefined;
   UploadedDocuments: undefined;
+  DocumentViewer: { documentId: string; title: string; fileUrl: string };
   AnalysisResult: { analysisId: string };
   SubjectNotes: { subjectId: string; subjectName?: string };
   TopicStudyNotes: {

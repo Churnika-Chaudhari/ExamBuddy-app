@@ -13,6 +13,7 @@ import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
 import ScreenWrapper from '@/presentation/components/ScreenWrapper';
 import { useDocumentStore } from '@/store/documentStore';
+import { canOpenDocument, openDocumentPdf } from '@/utils/openDocument';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -61,7 +62,7 @@ export default function UploadedDocumentsScreen() {
     if (!documents.length || clearing) return;
     Alert.alert(
       'Clear all documents?',
-      'This permanently deletes all your uploaded documents (PYQs, notes and study material). This cannot be undone.',
+      'This permanently deletes all your uploaded documents (PYQs and notes). This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -82,6 +83,18 @@ export default function UploadedDocumentsScreen() {
     );
   };
 
+  const openDocument = (item: Document) => {
+    if (canOpenDocument(item)) {
+      navigation.navigate('DocumentViewer', {
+        documentId: item.id,
+        title: item.title,
+        fileUrl: item.file_url,
+      });
+      return;
+    }
+    void openDocumentPdf(item);
+  };
+
   const renderItem = ({ item }: { item: Document }) => {
     const status = STATUS_META[item.status] ?? STATUS_META.ready;
     const meta = [
@@ -94,7 +107,7 @@ export default function UploadedDocumentsScreen() {
       .join('  ·  ');
 
     return (
-      <AppCard style={styles.docCard}>
+      <AppCard style={styles.docCard} onPress={() => openDocument(item)}>
         <View style={styles.docHeader}>
           <View style={styles.docIcon}>
             <Ionicons name="document-text-outline" size={20} color={colors.primary} />
@@ -115,6 +128,9 @@ export default function UploadedDocumentsScreen() {
           </View>
         </View>
         {meta ? <Text style={styles.docMeta}>{meta}</Text> : null}
+        {canOpenDocument(item) ? (
+          <Text style={styles.tapHint}>Tap to open PDF</Text>
+        ) : null}
         {item.status === 'failed' && item.error_message ? (
           <Text style={styles.docError}>{item.error_message}</Text>
         ) : null}
@@ -168,7 +184,7 @@ export default function UploadedDocumentsScreen() {
           <EmptyState
             icon="document-outline"
             title="No documents yet"
-            subtitle="Upload PYQs, notes or study material to power your AI notes"
+            subtitle="Upload PYQs or notes to power your AI study notes"
           />
         }
       />
@@ -301,6 +317,12 @@ const styles = StyleSheet.create({
   docError: {
     ...typography.caption,
     color: colors.error,
+    marginTop: spacing.xs,
+  },
+  tapHint: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: '600',
     marginTop: spacing.xs,
   },
   footer: {

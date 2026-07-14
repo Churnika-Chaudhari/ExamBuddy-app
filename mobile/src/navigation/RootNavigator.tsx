@@ -17,6 +17,7 @@ import SplashScreen from '@/presentation/screens/SplashScreen';
 import SubjectNotesScreen from '@/presentation/screens/SubjectNotesScreen';
 import TopicStudyNotesScreen from '@/presentation/screens/TopicStudyNotesScreen';
 import UploadPYQScreen from '@/presentation/screens/UploadPYQScreen';
+import DocumentViewerScreen from '@/presentation/screens/DocumentViewerScreen';
 import UploadedDocumentsScreen from '@/presentation/screens/UploadedDocumentsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -39,12 +40,17 @@ export default function RootNavigator() {
       <Stack.Screen
         name="UploadPYQ"
         component={UploadPYQScreen}
-        options={{ title: 'Upload PYQ' }}
+        options={{ title: 'Upload Documents' }}
       />
       <Stack.Screen
         name="UploadedDocuments"
         component={UploadedDocumentsScreen}
         options={{ title: 'Uploaded Documents' }}
+      />
+      <Stack.Screen
+        name="DocumentViewer"
+        component={DocumentViewerScreen}
+        options={({ route }) => ({ title: route.params.title })}
       />
       <Stack.Screen
         name="AnalysisResult"
