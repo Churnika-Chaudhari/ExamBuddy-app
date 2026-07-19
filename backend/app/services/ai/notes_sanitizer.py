@@ -42,9 +42,23 @@ _BOILERPLATE_LINE = re.compile(
     re.I,
 )
 
+# Motivational / meta filler that must never reach students.
+_FILLER_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"this topic is important", re.I),
+    re.compile(r"this is (a )?high[- ]priority topic", re.I),
+    re.compile(r"frequently asked in exams?", re.I),
+    re.compile(r"often asked in exams?", re.I),
+    re.compile(r"you should study", re.I),
+    re.compile(r"students? (should|must|need to) (study|revise|remember|learn)", re.I),
+    re.compile(r"revise this carefully", re.I),
+    re.compile(r"make sure to (study|revise)", re.I),
+    re.compile(r"⭐\s*frequently asked", re.I),
+    re.compile(r"^\s*exam priority\b", re.I),
+)
+
 
 def sanitize_note_text(text: str) -> str:
-    """Remove metadata, filenames, and exam-paper scaffolding from note text."""
+    """Remove metadata, filenames, filler, and exam-paper scaffolding from note text."""
     if not text:
         return ""
 
@@ -57,6 +71,8 @@ def sanitize_note_text(text: str) -> str:
             continue
 
         if any(p.search(line) for p in _DROP_LINE_PATTERNS):
+            continue
+        if any(p.search(line) for p in _FILLER_LINE_PATTERNS):
             continue
         if _SUBJECT_CODE_LINE.match(line):
             continue

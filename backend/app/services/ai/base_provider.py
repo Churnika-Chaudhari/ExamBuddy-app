@@ -64,6 +64,8 @@ class BaseAIProvider(ABC):
         user_prompt: str,
         *,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         pass
 
@@ -74,6 +76,8 @@ class BaseAIProvider(ABC):
         user_prompt: str,
         *,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> tuple[str, dict[str, Any]]:
         pass
 
@@ -83,10 +87,16 @@ class BaseAIProvider(ABC):
         user_prompt: str,
         *,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ):
         """Default: fall back to non-streaming generate_text."""
         content, _ = await self.generate_text(
-            system_prompt, user_prompt, max_output_tokens=max_output_tokens
+            system_prompt,
+            user_prompt,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            top_p=top_p,
         )
         yield content
 
@@ -102,20 +112,25 @@ class OpenAIProvider(BaseAIProvider):
         user_prompt: str,
         *,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         from openai import AsyncOpenAI
 
         client = AsyncOpenAI(api_key=self.api_key)
-        response = await client.chat.completions.create(
-            model=self.model,
-            messages=[
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-            max_tokens=max_output_tokens,
-        )
+            "response_format": {"type": "json_object"},
+            "temperature": 0.3 if temperature is None else temperature,
+            "max_tokens": max_output_tokens,
+        }
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        response = await client.chat.completions.create(**kwargs)
         content = response.choices[0].message.content or "{}"
         metadata = {
             "provider": "openai",
@@ -130,19 +145,24 @@ class OpenAIProvider(BaseAIProvider):
         user_prompt: str,
         *,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> tuple[str, dict[str, Any]]:
         from openai import AsyncOpenAI
 
         client = AsyncOpenAI(api_key=self.api_key)
-        response = await client.chat.completions.create(
-            model=self.model,
-            messages=[
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.4,
-            max_tokens=max_output_tokens,
-        )
+            "temperature": 0.4 if temperature is None else temperature,
+            "max_tokens": max_output_tokens,
+        }
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        response = await client.chat.completions.create(**kwargs)
         content = response.choices[0].message.content or ""
         metadata = {
             "provider": "openai",
@@ -157,20 +177,25 @@ class OpenAIProvider(BaseAIProvider):
         user_prompt: str,
         *,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ):
         from openai import AsyncOpenAI
 
         client = AsyncOpenAI(api_key=self.api_key)
-        stream = await client.chat.completions.create(
-            model=self.model,
-            messages=[
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.3,
-            max_tokens=max_output_tokens,
-            stream=True,
-        )
+            "temperature": 0.3 if temperature is None else temperature,
+            "max_tokens": max_output_tokens,
+            "stream": True,
+        }
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        stream = await client.chat.completions.create(**kwargs)
         async for chunk in stream:
             delta = chunk.choices[0].delta.content if chunk.choices else None
             if delta:
@@ -294,12 +319,16 @@ class GeminiProvider(BaseAIProvider):
         *,
         json_mode: bool,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> str:
         url = f"{GEMINI_API_BASE}/models/{model_name}:generateContent"
         generation_config: dict[str, Any] = {
-            "temperature": 0.3 if json_mode else 0.4,
+            "temperature": (0.3 if json_mode else 0.4) if temperature is None else temperature,
             "maxOutputTokens": self._effective_max_tokens(model_name, max_output_tokens),
         }
+        if top_p is not None:
+            generation_config["topP"] = top_p
         if json_mode:
             generation_config["responseMimeType"] = "application/json"
         if self._supports_thinking(model_name):
@@ -334,14 +363,18 @@ class GeminiProvider(BaseAIProvider):
         *,
         json_mode: bool,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> str:
         import google.generativeai as genai
 
         genai.configure(api_key=self.api_key)
         generation_config: dict[str, Any] = {
-            "temperature": 0.3 if json_mode else 0.4,
+            "temperature": (0.3 if json_mode else 0.4) if temperature is None else temperature,
             "max_output_tokens": self._effective_max_tokens(model_name, max_output_tokens),
         }
+        if top_p is not None:
+            generation_config["top_p"] = top_p
         if json_mode:
             generation_config["response_mime_type"] = "application/json"
         if self._supports_thinking(model_name):
@@ -371,6 +404,8 @@ class GeminiProvider(BaseAIProvider):
         *,
         json_mode: bool,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> tuple[str, str]:
         last_exc: Exception | None = None
 
@@ -384,6 +419,8 @@ class GeminiProvider(BaseAIProvider):
                     user_prompt,
                     json_mode=json_mode,
                     max_output_tokens=max_output_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
                 )
                 if content.strip():
                     logger.info("Gemini rest generation succeeded model=%s", model_name)
@@ -407,6 +444,8 @@ class GeminiProvider(BaseAIProvider):
                 user_prompt,
                 json_mode=json_mode,
                 max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                top_p=top_p,
             )
             if content.strip():
                 logger.info("Gemini sdk generation succeeded model=%s", self.model)
@@ -423,9 +462,16 @@ class GeminiProvider(BaseAIProvider):
         user_prompt: str,
         *,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         content, model_name = await self._generate(
-            system_prompt, user_prompt, json_mode=True, max_output_tokens=max_output_tokens
+            system_prompt,
+            user_prompt,
+            json_mode=True,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            top_p=top_p,
         )
         parsed = self._parse_json_content(content)
         metadata = {
@@ -441,9 +487,16 @@ class GeminiProvider(BaseAIProvider):
         user_prompt: str,
         *,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> tuple[str, dict[str, Any]]:
         content, model_name = await self._generate(
-            system_prompt, user_prompt, json_mode=False, max_output_tokens=max_output_tokens
+            system_prompt,
+            user_prompt,
+            json_mode=False,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            top_p=top_p,
         )
         metadata = {
             "provider": "gemini",
@@ -458,15 +511,19 @@ class GeminiProvider(BaseAIProvider):
         user_prompt: str,
         *,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ):
         import google.generativeai as genai
 
         genai.configure(api_key=self.api_key)
         generation_config: dict[str, Any] = {
-            "temperature": 0.3,
+            "temperature": 0.3 if temperature is None else temperature,
             "max_output_tokens": self._effective_max_tokens(self.model, max_output_tokens),
             "response_mime_type": "application/json",
         }
+        if top_p is not None:
+            generation_config["top_p"] = top_p
         if self._supports_thinking(self.model):
             generation_config["thinking_config"] = {"thinking_budget": 0}
 

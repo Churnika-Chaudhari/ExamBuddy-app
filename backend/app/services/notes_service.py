@@ -14,7 +14,7 @@ from app.repositories.generated_notes_repository import (
 from app.repositories.notes_repository import NotesRepository
 from app.repositories.stats_repository import StatsRepository
 from app.services.ai.ai_service import AIService
-from app.services.llm_service import compact_analysis_context
+from app.services.llm_service import compact_analysis_context, extract_pyq_questions_for_topic
 from app.services.ai.prompts import PROMPT_VERSION
 from app.services.generated_note_mapper import map_generated_note
 from app.services.pipeline.notes_pipeline import NotesPipeline
@@ -129,6 +129,7 @@ class NotesService:
             rag_sources=rag_sources,
             pipeline_context=ctx["pipeline_context"],
             exam_priority=ctx["exam_priority"],
+            pyq_questions=ctx["pyq_questions"],
         )
 
         notes_text = (result.get("notes") or result.get("content") or "").strip()
@@ -212,12 +213,36 @@ class NotesService:
                         break
             exam_priority = self.notes_pipeline.topic_frequency_label(frequency)
 
+        pyq_questions = extract_pyq_questions_for_topic(analysis_doc, topic)
+        # Enrich with question-like lines from retrieved chunks when analysis is thin.
+        if "No direct PYQ" in pyq_questions and rag_context:
+            topic_l = topic.lower()
+            extras: list[str] = []
+            for line in rag_context.splitlines():
+                cleaned = line.strip()
+                if len(cleaned) < 20:
+                    continue
+                lower = cleaned.lower()
+                if topic_l not in lower and not any(
+                    w in lower for w in topic_l.split() if len(w) > 3
+                ):
+                    continue
+                if "?" in cleaned or lower.startswith(
+                    ("explain", "define", "describe", "write", "compare", "differentiate", "what is")
+                ):
+                    extras.append(f"- {cleaned[:300]}")
+                if len(extras) >= 8:
+                    break
+            if extras:
+                pyq_questions = "\n".join(extras)
+
         return {
             "analysis_context": analysis_context,
             "rag_context": rag_context,
             "rag_sources": rag_sources,
             "pipeline_context": pipeline_context,
             "exam_priority": exam_priority,
+            "pyq_questions": pyq_questions,
             "subject": subject,
             "frequency": frequency,
         }
@@ -252,6 +277,7 @@ class NotesService:
             subject=ctx["subject"],
             pipeline_context=ctx["pipeline_context"],
             exam_priority=ctx["exam_priority"],
+            pyq_questions=ctx["pyq_questions"],
         ):
             yield token
 

@@ -135,23 +135,14 @@ class NotesPipeline:
         *,
         frequency: int | None = None,
     ) -> str:
-        """Extra context injected into Gemini notes prompt."""
-        parts: list[str] = []
+        """Extra context injected into notes prompt (never student-facing labels)."""
+        parts: list[str] = [
+            "Write complete exam-ready engineering notes.",
+            "Never include file names, subject codes, upload labels, marks, or motivational filler.",
+            "Do not say the topic is important or frequently asked.",
+        ]
         if analysis:
             summary = (analysis.get("summary") or "").strip()
             if summary:
-                parts.append(summary[:400])
-            freq_table = analysis.get("topic_frequency_table") or []
-            for row in freq_table:
-                if str(row.get("topic", "")).lower() == topic.lower():
-                    frequency = frequency or int(row.get("frequency", 0))
-                    break
-
-        label = self.topic_frequency_label(frequency)
-        if label:
-            parts.append(f"Exam priority for this topic: {label}")
-        parts.append(
-            "Write clean textbook-quality notes. Never include file names, subject codes, "
-            "upload labels, or question-paper metadata in the output."
-        )
+                parts.append(f"Analysis summary (internal): {summary[:400]}")
         return "\n".join(p for p in parts if p).strip()

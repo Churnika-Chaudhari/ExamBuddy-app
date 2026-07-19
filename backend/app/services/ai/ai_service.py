@@ -366,6 +366,7 @@ Revise definition, conceptual explanation, and one practical example for {topic}
         rag_sources: list[dict[str, Any]] | None = None,
         pipeline_context: str = "",
         exam_priority: str = "",
+        pyq_questions: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if not self.ai_available:
             result, meta = self._local_topic_notes(
@@ -383,6 +384,7 @@ Revise definition, conceptual explanation, and one practical example for {topic}
                 subject=subject,
                 pipeline_context=pipeline_context,
                 exam_priority=exam_priority,
+                pyq_questions=pyq_questions,
             )
             result = self._normalize_topic_result(result, topic=topic)
             if rag_sources:
@@ -414,6 +416,7 @@ Revise definition, conceptual explanation, and one practical example for {topic}
         subject: str | None = None,
         pipeline_context: str = "",
         exam_priority: str = "",
+        pyq_questions: str = "",
     ):
         """Stream LLM tokens for progressive notes rendering."""
         async for token in self.llm_service.stream_topic_notes_tokens(
@@ -423,6 +426,7 @@ Revise definition, conceptual explanation, and one practical example for {topic}
             subject=subject,
             pipeline_context=pipeline_context,
             exam_priority=exam_priority,
+            pyq_questions=pyq_questions,
         ):
             yield token
 

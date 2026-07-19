@@ -2,34 +2,53 @@
 
 from __future__ import annotations
 
-from app.services.ai.notes_sanitizer import sanitize_note_text, sanitize_rag_passage
+from typing import Any
+
+from app.services.ai.notes_sanitizer import sanitize_note_text
 
 STRUCTURED_NOTE_FIELDS = (
     "topic",
     "definition",
-    "conceptualExplanation",
-    "conceptual_explanation",
-    "practicalExamples",
-    "practical_examples",
     "introduction",
-    "background",
+    "whyUsed",
+    "why_used",
+    "workingPrinciple",
+    "working_principle",
     "working",
     "architecture",
-    "diagram",
     "components",
     "types",
     "features",
+    "detailedExplanation",
+    "detailed_explanation",
+    "conceptualExplanation",
+    "conceptual_explanation",
+    "stepByStep",
+    "step_by_step",
+    "example",
+    "practicalExamples",
+    "practical_examples",
+    "realWorldExample",
+    "real_world_example",
+    "diagram",
+    "formula",
     "advantages",
     "disadvantages",
     "applications",
-    "example",
     "comparison",
+    "commonMistakes",
+    "common_mistakes",
+    "examQuestions",
+    "exam_questions",
+    "universityQuestions",
     "interviewQuestions",
     "vivaQuestions",
-    "universityQuestions",
+    "keyPoints",
+    "key_points",
     "examTips",
     "keywords",
     "summary",
+    "background",
 )
 
 
@@ -42,16 +61,31 @@ def is_structured_notes_result(data: dict[str, Any]) -> bool:
     markers = (
         "definition",
         "introduction",
+        "detailedExplanation",
+        "detailed_explanation",
         "conceptualExplanation",
         "conceptual_explanation",
+        "workingPrinciple",
         "working",
         "components",
         "advantages",
-        "practicalExamples",
+        "examQuestions",
         "interviewQuestions",
-        "vivaQuestions",
+        "keyPoints",
     )
     return any(data.get(key) for key in markers)
+
+
+def _first(*values: Any) -> Any:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (list, dict)) and not value:
+            continue
+        return value
+    return None
 
 
 def _as_text(value: Any) -> str:
@@ -158,7 +192,7 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
     if isinstance(comparison, str):
         text = comparison.strip()
         if text:
-            lines.extend([f"## Comparison", text, ""])
+            lines.extend(["## Comparison Table", text, ""])
         return
     if not isinstance(comparison, dict):
         return
@@ -170,11 +204,13 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
         or comparison.get("topicB")
         or comparison.get("b")
     )
-    title = f"Comparison: {left} vs {right}" if left and right else "Comparison"
+    title = f"Comparison Table: {left} vs {right}" if left and right else "Comparison Table"
     lines.append(f"## {title}")
 
     table = comparison.get("table") or comparison.get("rows") or []
     if isinstance(table, list) and table:
+        lines.append(f"| Aspect | {left or 'A'} | {right or 'B'} |")
+        lines.append("|---|---|---|")
         for row in table:
             if isinstance(row, dict):
                 aspect = _as_text(row.get("aspect") or row.get("feature") or row.get("point"))
@@ -190,16 +226,10 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
                     or row.get("b")
                     or row.get("second")
                 )
-                if aspect and left_val and right_val:
-                    lines.append(f"- **{aspect}**: {left} — {left_val}; {right} — {right_val}")
-                elif aspect:
-                    lines.append(f"- **{aspect}**: {left_val or right_val}")
-                else:
-                    line = _as_text(row)
-                    if line:
-                        lines.append(f"- {line}")
+                if aspect:
+                    lines.append(f"| {aspect} | {left_val} | {right_val} |")
             elif isinstance(row, str) and row.strip():
-                lines.append(f"- {row.strip()}")
+                lines.append(f"| {row.strip()} |  |  |")
     else:
         summary = _as_text(comparison.get("summary") or comparison.get("description"))
         if summary:
@@ -208,87 +238,97 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
     lines.append("")
 
 
-def _build_conceptual_explanation(data: dict[str, Any]) -> str:
-    direct = _as_text(
-        data.get("conceptualExplanation")
-        or data.get("conceptual_explanation")
-        or data.get("concept")
-    )
-    if direct:
-        return direct
-
-    parts: list[str] = []
-    for key in (
-        "introduction",
-        "background",
-        "working",
-        "process",
-        "architecture",
-        "architectureFlow",
-        "diagram",
-    ):
-        text = _as_text(data.get(key))
-        if text:
-            parts.append(text)
-
-    for key in ("components", "types", "features"):
-        bullets = _as_bullets(data.get(key))
-        if bullets:
-            parts.append("\n".join(f"- {b}" for b in bullets))
-
-    return "\n\n".join(parts).strip()
-
-
-def _build_practical_examples(data: dict[str, Any]) -> str:
-    direct = _as_text(
-        data.get("practicalExamples")
-        or data.get("practical_examples")
-        or data.get("examples")
-    )
-    if direct:
-        return direct
-
-    parts: list[str] = []
-    example = _as_text(data.get("example"))
-    if example:
-        parts.append(example)
-    apps = _as_bullets(data.get("applications"))
-    if apps:
-        parts.extend(f"- {a}" for a in apps)
-    return "\n\n".join(parts).strip()
-
-
 def structured_notes_to_markdown(data: dict[str, Any]) -> str:
     """Render clean exam-oriented structured JSON into markdown."""
     topic = _as_text(data.get("topic") or data.get("title") or "Study Topic")
-    lines: list[str] = [f"# {topic}"]
-
-    priority = _as_text(data.get("exam_priority") or data.get("examPriority"))
-    if priority and "frequently" in priority.lower():
-        lines.extend(["⭐ Frequently Asked in Exams", ""])
+    lines: list[str] = [f"# {topic}", ""]
 
     _append_section(lines, "Definition", data.get("definition"))
-
-    conceptual = _build_conceptual_explanation(data)
-    _append_section(lines, "Conceptual Explanation", conceptual)
-
-    practical = _build_practical_examples(data)
-    _append_section(lines, "Practical Examples", practical)
-
+    _append_section(lines, "Introduction", data.get("introduction") or data.get("background"))
+    _append_section(
+        lines,
+        "Why it is used",
+        _first(data.get("whyUsed"), data.get("why_used")),
+    )
+    _append_section(
+        lines,
+        "Working Principle",
+        _first(data.get("workingPrinciple"), data.get("working_principle"), data.get("working")),
+    )
+    arch_text = _as_text(data.get("architecture"))
+    arch_bullets = _as_bullets(data.get("components"))
+    if arch_text or arch_bullets:
+        lines.append("## Architecture / Components")
+        if arch_text:
+            lines.append(arch_text)
+        lines.extend(f"- {b}" for b in arch_bullets)
+        lines.append("")
+    _append_bullet_section(lines, "Types", _first(data.get("types"), data.get("features")))
+    _append_section(
+        lines,
+        "Detailed Explanation",
+        _first(
+            data.get("detailedExplanation"),
+            data.get("detailed_explanation"),
+            data.get("conceptualExplanation"),
+            data.get("conceptual_explanation"),
+        ),
+    )
+    _append_section(
+        lines,
+        "Step-by-step Working",
+        _first(data.get("stepByStep"), data.get("step_by_step")),
+    )
+    _append_section(
+        lines,
+        "Example",
+        _first(
+            data.get("example"),
+            data.get("practicalExamples"),
+            data.get("practical_examples"),
+        ),
+    )
+    _append_section(
+        lines,
+        "Real-world Example",
+        _first(data.get("realWorldExample"), data.get("real_world_example")),
+    )
+    _append_section(lines, "Diagram", data.get("diagram"))
+    _append_section(lines, "Formula", data.get("formula"))
     _append_bullet_section(lines, "Advantages", data.get("advantages"))
     _append_bullet_section(lines, "Disadvantages", data.get("disadvantages"))
+    _append_bullet_section(lines, "Applications", data.get("applications"))
     _append_comparison(lines, data.get("comparison"))
+    _append_bullet_section(
+        lines,
+        "Common Mistakes",
+        _first(data.get("commonMistakes"), data.get("common_mistakes")),
+    )
+    _append_qa_section(
+        lines,
+        "Frequently Asked Exam Questions",
+        _first(
+            data.get("examQuestions"),
+            data.get("exam_questions"),
+            data.get("universityQuestions"),
+            data.get("vivaQuestions"),
+        ),
+    )
     _append_qa_section(
         lines,
         "Interview Questions",
         data.get("interviewQuestions") or data.get("interview_questions"),
     )
-    _append_qa_section(
+    _append_bullet_section(
         lines,
-        "Viva Questions",
-        data.get("vivaQuestions") or data.get("viva_questions"),
+        "Key Points to Remember",
+        _first(
+            data.get("keyPoints"),
+            data.get("key_points"),
+            data.get("examTips"),
+            data.get("exam_tips"),
+        ),
     )
-    _append_bullet_section(lines, "Exam Tips", data.get("examTips") or data.get("exam_tips"))
     _append_bullet_section(lines, "Keywords", data.get("keywords"))
     _append_section(lines, "Summary", data.get("summary"))
 
@@ -299,6 +339,4 @@ def structured_notes_to_markdown(data: dict[str, Any]) -> str:
 def extract_structured_payload(data: dict[str, Any]) -> dict[str, Any]:
     """Keep only structured note fields for storage/API metadata."""
     payload = {key: data[key] for key in STRUCTURED_NOTE_FIELDS if data.get(key) is not None}
-    if data.get("exam_priority"):
-        payload["exam_priority"] = data["exam_priority"]
     return payload
