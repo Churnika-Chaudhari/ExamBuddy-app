@@ -80,9 +80,26 @@ function buildApiUrl(host: string): string {
   return `http://${host}:${API_PORT}${API_PATH}`;
 }
 
+function getConfiguredApiUrl(): string | undefined {
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim();
+  if (fromEnv) return fromEnv;
+
+  const fromExtra = Constants.expoConfig?.extra?.apiUrl;
+  if (typeof fromExtra === 'string' && fromExtra.trim()) {
+    return fromExtra.trim();
+  }
+
+  return undefined;
+}
+
+function isApiUrlForced(): boolean {
+  if (process.env.EXPO_PUBLIC_API_FORCE === 'true') return true;
+  return Constants.expoConfig?.extra?.apiForce === true;
+}
+
 function resolveApiUrl(): string {
-  const configured = process.env.EXPO_PUBLIC_API_URL?.trim();
-  const forceConfigured = process.env.EXPO_PUBLIC_API_FORCE === 'true';
+  const configured = getConfiguredApiUrl();
+  const forceConfigured = isApiUrlForced();
   const runtime = detectRuntimePlatform();
 
   if (forceConfigured && configured) {

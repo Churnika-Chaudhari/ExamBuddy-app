@@ -8,11 +8,62 @@ const sdk = path.join(process.env.LOCALAPPDATA || '', 'Android', 'Sdk');
 const gradleHome = process.env.GRADLE_USER_HOME || 'D:\\gradle';
 const tmpDir = process.env.TEMP || path.join(mobileDir, '.tmp');
 const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://10.167.199.44:8000/api/v1';
+const apiForce = process.env.EXPO_PUBLIC_API_FORCE === 'true';
 const buildVariant = process.env.APK_BUILD_VARIANT === 'release' ? 'release' : 'debug';
 const assembleTask = buildVariant === 'release' ? 'assembleRelease' : 'assembleDebug';
+const envFilePath = path.join(mobileDir, '.env');
+
+function writeBuildEnvFile() {
+  const lines = [`EXPO_PUBLIC_API_URL=${apiUrl}`];
+  if (apiForce) {
+    lines.push('EXPO_PUBLIC_API_FORCE=true');
+  }
+  fs.writeFileSync(envFilePath, `${lines.join('\n')}\n`, 'utf8');
+  console.log('Wrote', path.relative(mobileDir, envFilePath));
+}
+
+function cleanMetroCaches() {
+  for (const dir of [
+    path.join(mobileDir, '.expo'),
+    path.join(mobileDir, 'node_modules', '.cache'),
+  ]) {
+    if (fs.existsSync(dir)) {
+      console.log('Cleaning', path.relative(mobileDir, dir));
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
+function verifyBundleApiUrl() {
+  const bundlePath = path.join(
+    androidDir,
+    'app',
+    'build',
+    'generated',
+    'assets',
+    `createBundle${buildVariant === 'release' ? 'Release' : 'Debug'}JsAndAssets`,
+    'index.android.bundle'
+  );
+
+  if (!fs.existsSync(bundlePath)) {
+    console.warn('Could not verify bundle URL: bundle file missing at', bundlePath);
+    return;
+  }
+
+  const bundleText = fs.readFileSync(bundlePath);
+  if (!bundleText.includes(Buffer.from(apiUrl))) {
+    console.error('\nBuild verification failed: JS bundle does not contain the expected API URL.');
+    console.error('Expected:', apiUrl);
+    process.exit(1);
+  }
+
+  console.log('Verified bundle contains API URL:', apiUrl);
+}
 
 fs.mkdirSync(gradleHome, { recursive: true });
 fs.mkdirSync(tmpDir, { recursive: true });
+writeBuildEnvFile();
+cleanMetroCaches();
 
 if (!fs.existsSync(sdk)) {
   console.error('Android SDK not found at', sdk);
@@ -27,7 +78,9 @@ const env = {
   GRADLE_USER_HOME: gradleHome,
   TEMP: tmpDir,
   TMP: tmpDir,
+  NODE_ENV: buildVariant === 'release' ? 'production' : 'development',
   EXPO_PUBLIC_API_URL: apiUrl,
+  EXPO_PUBLIC_API_FORCE: apiForce ? 'true' : 'false',
 };
 
 console.log('\nSmartStudy local APK build');
@@ -69,10 +122,22 @@ if (fs.existsSync(gradleProps)) {
 console.log('\nStep 2/2: Compiling APK (Gradle)...');
 const androidDir = path.join(mobileDir, 'android');
 
+// Stop daemons first so .gradle locks are released before cleanup.
+if (fs.existsSync(path.join(androidDir, 'gradlew.bat'))) {
+  run('gradlew.bat', ['--stop'], androidDir);
+}
+
 // Stale .cxx caches embed old Gradle paths (e.g. Cursor sandbox) and break ninja on Windows.
 function removeDir(dir) {
-  if (fs.existsSync(dir)) {
+  if (!fs.existsSync(dir)) return;
+  try {
     fs.rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    if (err && err.code === 'EBUSY') {
+      console.warn('Skipping locked directory:', path.relative(mobileDir, dir));
+      return;
+    }
+    throw err;
   }
 }
 for (const dir of [
@@ -89,7 +154,6 @@ for (const dir of [
   }
 }
 
-run('gradlew.bat', ['--stop'], androidDir);
 run(
   'gradlew.bat',
   [
@@ -126,6 +190,7 @@ if (!fs.existsSync(apkPath)) {
 
 fs.mkdirSync(shareDir, { recursive: true });
 fs.copyFileSync(apkPath, shareApk);
+verifyBundleApiUrl();
 
 console.log('\n========================================');
 console.log('APK built successfully!');

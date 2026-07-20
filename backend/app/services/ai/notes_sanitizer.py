@@ -54,7 +54,45 @@ _FILLER_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"make sure to (study|revise)", re.I),
     re.compile(r"⭐\s*frequently asked", re.I),
     re.compile(r"^\s*exam priority\b", re.I),
+    re.compile(r"according to (the )?uploaded", re.I),
+    re.compile(r"based on (the )?(uploaded|retrieved|provided) (material|document|content)", re.I),
+    re.compile(r"as an ai\b", re.I),
+    re.compile(r"i (am|have been) (an? )?(ai|language model)", re.I),
 )
+
+# Instruction / placeholder lines that look like prompt scaffolding, not notes.
+_INSTRUCTION_PLACEHOLDER_LINE = re.compile(
+    r"^\s*("
+    r"explain\s+(what|why|how|the|this|each|every|all|important)|"
+    r"provide\s+(a|an|at\s+least|one|the|detailed|complete|full)|"
+    r"discuss\s+(the|this|about|how|why)|"
+    r"write\s+(a|an|the|short|detailed|complete|about)|"
+    r"describe\s+(the|this|how|what|each)|"
+    r"cover\s+(key|the|all|important)|"
+    r"include\s+(all|one|at\s+least|a|an|code|syntax|example)|"
+    r"give\s+(at\s+least|a|an|one)\s+(one\s+)?(concrete|worked|real|example)|"
+    r"list\s+and\s+explain|"
+    r"break\s+into\s+subtopics|"
+    r"generate\s+(an?\s+)?(ascii|diagram|notes?)"
+    r")\b",
+    re.I,
+)
+
+
+def is_placeholder_notes(notes: str) -> bool:
+    """True when notes look like prompt instructions instead of real study content."""
+    if not notes or len(notes.strip()) < 80:
+        return True
+    if "Provide at least one concrete" in notes or "Explain what **" in notes:
+        return True
+    hits = 0
+    for line in notes.splitlines():
+        if _INSTRUCTION_PLACEHOLDER_LINE.match(line.strip()):
+            hits += 1
+            if hits >= 2:
+                return True
+    return False
+
 
 
 def sanitize_note_text(text: str) -> str:
@@ -73,6 +111,8 @@ def sanitize_note_text(text: str) -> str:
         if any(p.search(line) for p in _DROP_LINE_PATTERNS):
             continue
         if any(p.search(line) for p in _FILLER_LINE_PATTERNS):
+            continue
+        if _INSTRUCTION_PLACEHOLDER_LINE.match(line):
             continue
         if _SUBJECT_CODE_LINE.match(line):
             continue

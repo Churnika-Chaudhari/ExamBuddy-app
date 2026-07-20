@@ -137,9 +137,11 @@ class NotesPipeline:
     ) -> str:
         """Extra context injected into notes prompt (never student-facing labels)."""
         parts: list[str] = [
-            "Write complete exam-ready engineering notes.",
-            "Never include file names, subject codes, upload labels, marks, or motivational filler.",
+            "Generate FINAL university textbook notes only.",
+            "Never output placeholder instructions such as Explain, Provide, Discuss, Write, Describe, or Cover.",
+            "Never include file names, subject codes, upload labels, marks, AI mentions, or motivational filler.",
             "Do not say the topic is important or frequently asked.",
+            "Skip sections that do not apply; populate every other section with complete teaching content.",
         ]
         if analysis:
             summary = (analysis.get("summary") or "").strip()

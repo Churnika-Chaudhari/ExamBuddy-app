@@ -23,6 +23,7 @@ from app.services.ai.base_provider import (
     GeminiProvider,
     OpenAIProvider,
 )
+from app.services.ai.provider_order import resolve_provider_order
 from app.services.ai.prompts import (
     PROMPT_VERSION,
     PYQ_ANALYSIS_SYSTEM_PROMPT,
@@ -148,17 +149,13 @@ class LLMService:
         return OpenAIProvider(self.settings.openai_api_key, self.settings.openai_model)
 
     def _load_providers(self) -> None:
-        preferred = self.settings.ai_provider
-        order = [preferred, "gemini" if preferred == "openai" else "openai"]
-        seen: set[str] = set()
-        for name in order:
-            if name in seen:
-                continue
-            seen.add(name)
+        for name in resolve_provider_order(self.settings):
             try:
                 self.providers.append((name, self._build_provider(name)))
             except ExternalServiceError as exc:
                 logger.warning("LLM provider %s unavailable: %s", name, exc.message)
+        if self.providers:
+            logger.info("LLM providers ready: %s", [name for name, _ in self.providers])
 
     async def _generate_json(
         self,
@@ -206,10 +203,10 @@ class LLMService:
             pyq_questions=trim_context(pyq_questions, MAX_PYQ_QUESTIONS_CHARS)
             or (
                 f"No direct PYQ question text matched for '{topic}'. "
-                "Cover define/explain/compare/short-notes angles typical for this subject."
+                "Produce complete textbook notes covering definition, working, example, comparison, and exam Q&A."
             ),
             rag_context=trim_context(rag_context, MAX_RAG_CONTEXT_CHARS)
-            or "No reference snippets available — use accurate standard syllabus knowledge.",
+            or "No uploaded study material snippets available — complete the notes using accurate standard university textbook knowledge for the subject.",
             analysis_context=trim_context(analysis_context, MAX_ANALYSIS_CONTEXT_CHARS)
             or "No additional analysis signals.",
             pipeline_context=trim_context(pipeline_context, MAX_PIPELINE_CONTEXT_CHARS),

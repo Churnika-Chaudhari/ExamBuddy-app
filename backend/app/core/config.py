@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
 
-    # AI
-    ai_provider: Literal["openai", "gemini"] = "openai"
+    # AI — default Gemini (OpenAI optional). Prefer whichever key is actually set.
+    ai_provider: Literal["openai", "gemini"] = "gemini"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     gemini_api_key: str = ""

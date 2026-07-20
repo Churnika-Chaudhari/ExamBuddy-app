@@ -12,43 +12,51 @@ STRUCTURED_NOTE_FIELDS = (
     "introduction",
     "whyUsed",
     "why_used",
-    "workingPrinciple",
-    "working_principle",
-    "working",
-    "architecture",
-    "components",
-    "types",
-    "features",
+    "whyNeeded",
+    "why_needed",
     "detailedExplanation",
     "detailed_explanation",
     "conceptualExplanation",
     "conceptual_explanation",
-    "stepByStep",
-    "step_by_step",
+    "working",
+    "workingPrinciple",
+    "working_principle",
+    "architecture",
+    "components",
+    "types",
+    "features",
+    "characteristics",
+    "flow",
+    "syntax",
+    "algorithm",
+    "formula",
+    "diagram",
     "example",
     "practicalExamples",
     "practical_examples",
     "realWorldExample",
     "real_world_example",
-    "diagram",
-    "formula",
     "advantages",
     "disadvantages",
     "applications",
     "comparison",
-    "commonMistakes",
-    "common_mistakes",
+    "keyPoints",
+    "key_points",
+    "keywords",
+    "examTips",
     "examQuestions",
     "exam_questions",
     "universityQuestions",
-    "interviewQuestions",
     "vivaQuestions",
-    "keyPoints",
-    "key_points",
-    "examTips",
-    "keywords",
+    "viva_questions",
+    "interviewQuestions",
+    "interview_questions",
+    "commonMistakes",
+    "common_mistakes",
     "summary",
     "background",
+    "stepByStep",
+    "step_by_step",
 )
 
 
@@ -70,6 +78,7 @@ def is_structured_notes_result(data: dict[str, Any]) -> bool:
         "components",
         "advantages",
         "examQuestions",
+        "vivaQuestions",
         "interviewQuestions",
         "keyPoints",
     )
@@ -192,7 +201,7 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
     if isinstance(comparison, str):
         text = comparison.strip()
         if text:
-            lines.extend(["## Comparison Table", text, ""])
+            lines.extend(["## Comparison", text, ""])
         return
     if not isinstance(comparison, dict):
         return
@@ -204,7 +213,7 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
         or comparison.get("topicB")
         or comparison.get("b")
     )
-    title = f"Comparison Table: {left} vs {right}" if left and right else "Comparison Table"
+    title = f"Comparison: {left} vs {right}" if left and right else "Comparison"
     lines.append(f"## {title}")
 
     table = comparison.get("table") or comparison.get("rows") or []
@@ -239,7 +248,7 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
 
 
 def structured_notes_to_markdown(data: dict[str, Any]) -> str:
-    """Render clean exam-oriented structured JSON into markdown."""
+    """Render clean textbook-style structured JSON into markdown."""
     topic = _as_text(data.get("topic") or data.get("title") or "Study Topic")
     lines: list[str] = [f"# {topic}", ""]
 
@@ -247,23 +256,9 @@ def structured_notes_to_markdown(data: dict[str, Any]) -> str:
     _append_section(lines, "Introduction", data.get("introduction") or data.get("background"))
     _append_section(
         lines,
-        "Why it is used",
-        _first(data.get("whyUsed"), data.get("why_used")),
+        "Why is it needed?",
+        _first(data.get("whyUsed"), data.get("why_used"), data.get("whyNeeded"), data.get("why_needed")),
     )
-    _append_section(
-        lines,
-        "Working Principle",
-        _first(data.get("workingPrinciple"), data.get("working_principle"), data.get("working")),
-    )
-    arch_text = _as_text(data.get("architecture"))
-    arch_bullets = _as_bullets(data.get("components"))
-    if arch_text or arch_bullets:
-        lines.append("## Architecture / Components")
-        if arch_text:
-            lines.append(arch_text)
-        lines.extend(f"- {b}" for b in arch_bullets)
-        lines.append("")
-    _append_bullet_section(lines, "Types", _first(data.get("types"), data.get("features")))
     _append_section(
         lines,
         "Detailed Explanation",
@@ -276,9 +271,33 @@ def structured_notes_to_markdown(data: dict[str, Any]) -> str:
     )
     _append_section(
         lines,
-        "Step-by-step Working",
-        _first(data.get("stepByStep"), data.get("step_by_step")),
+        "Working",
+        _first(
+            data.get("working"),
+            data.get("workingPrinciple"),
+            data.get("working_principle"),
+            data.get("stepByStep"),
+            data.get("step_by_step"),
+        ),
     )
+
+    arch_text = _as_text(data.get("architecture"))
+    arch_bullets = _as_bullets(data.get("components"))
+    if arch_text or arch_bullets:
+        lines.append("## Architecture / Components")
+        if arch_text:
+            lines.append(arch_text)
+        lines.extend(f"- {b}" for b in arch_bullets)
+        lines.append("")
+
+    _append_bullet_section(lines, "Types", data.get("types"))
+    _append_bullet_section(lines, "Features", data.get("features"))
+    _append_bullet_section(lines, "Characteristics", data.get("characteristics"))
+    _append_section(lines, "Flow", data.get("flow"))
+    _append_section(lines, "Syntax", data.get("syntax"))
+    _append_section(lines, "Algorithm", data.get("algorithm"))
+    _append_section(lines, "Formula", data.get("formula"))
+    _append_section(lines, "Diagram", data.get("diagram"))
     _append_section(
         lines,
         "Example",
@@ -286,50 +305,49 @@ def structured_notes_to_markdown(data: dict[str, Any]) -> str:
             data.get("example"),
             data.get("practicalExamples"),
             data.get("practical_examples"),
+            data.get("realWorldExample"),
+            data.get("real_world_example"),
         ),
     )
-    _append_section(
-        lines,
-        "Real-world Example",
-        _first(data.get("realWorldExample"), data.get("real_world_example")),
-    )
-    _append_section(lines, "Diagram", data.get("diagram"))
-    _append_section(lines, "Formula", data.get("formula"))
     _append_bullet_section(lines, "Advantages", data.get("advantages"))
     _append_bullet_section(lines, "Disadvantages", data.get("disadvantages"))
     _append_bullet_section(lines, "Applications", data.get("applications"))
     _append_comparison(lines, data.get("comparison"))
     _append_bullet_section(
         lines,
-        "Common Mistakes",
-        _first(data.get("commonMistakes"), data.get("common_mistakes")),
-    )
-    _append_qa_section(
-        lines,
-        "Frequently Asked Exam Questions",
-        _first(
-            data.get("examQuestions"),
-            data.get("exam_questions"),
-            data.get("universityQuestions"),
-            data.get("vivaQuestions"),
-        ),
-    )
-    _append_qa_section(
-        lines,
-        "Interview Questions",
-        data.get("interviewQuestions") or data.get("interview_questions"),
-    )
-    _append_bullet_section(
-        lines,
-        "Key Points to Remember",
+        "Important Exam Points",
         _first(
             data.get("keyPoints"),
             data.get("key_points"),
+            data.get("keywords"),
             data.get("examTips"),
             data.get("exam_tips"),
         ),
     )
-    _append_bullet_section(lines, "Keywords", data.get("keywords"))
+    _append_qa_section(
+        lines,
+        "Frequently Asked University Questions",
+        _first(
+            data.get("examQuestions"),
+            data.get("exam_questions"),
+            data.get("universityQuestions"),
+        ),
+    )
+    _append_qa_section(
+        lines,
+        "Viva Questions",
+        _first(
+            data.get("vivaQuestions"),
+            data.get("viva_questions"),
+            data.get("interviewQuestions"),
+            data.get("interview_questions"),
+        ),
+    )
+    _append_bullet_section(
+        lines,
+        "Common Mistakes",
+        _first(data.get("commonMistakes"), data.get("common_mistakes")),
+    )
     _append_section(lines, "Summary", data.get("summary"))
 
     markdown = sanitize_note_text("\n".join(lines).strip())

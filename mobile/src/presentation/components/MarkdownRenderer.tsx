@@ -20,30 +20,43 @@ const DIAGRAM_LINE = /^[\s|+_\-=*/\\<>^v.~`#─━│┌┐└┘├┤┬┴┼
 const TABLE_SEPARATOR = /^\s*\|?[\s:|-]+\|[\s:|-]*$/;
 const ARROWS_RIGHT = /[→⇒⟶➡]/g;
 const ARROWS_LEFT = /[←⇐⟵]/g;
-const BOX_CHARS = /[─━│┌┐└┘├┤┬┴┼╔╗╚╝█▀▄▌▐░▒▓↑↓↕↔]/g;
 
 const METADATA_LINE =
   /^\s*(\[Source\s+\d+:|>\s*FROM\s+UPLOADED|FROM\s+UPLOADED\s+DOCUMENTS|RETRIEVED\s+CONTENT|Subject\s*(Code|No\.?)\s*:?\s*\d{4,6}\s*$)/i;
 
 /**
- * Strip noise so only clean, important content is shown: removes control/
- * zero-width chars, markdown tables, ASCII diagrams, code fences, backticks,
- * document metadata lines, and stray special characters.
+ * Strip metadata and control noise while preserving code fences, tables,
+ * and ASCII diagrams so notes read like a textbook chapter.
  */
 function sanitizeContent(raw: string): string {
   if (!raw) return '';
   const text = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(CONTROL_CHARS, '');
   const out: string[] = [];
+  let inCode = false;
 
   for (const original of text.split('\n')) {
     let line = original.replace(/\s+$/, '');
     let stripped = line.trim();
 
-    if (!stripped) continue;
-    if (METADATA_LINE.test(stripped)) continue;
-    if (stripped.startsWith('```') || stripped.startsWith('~~~')) continue;
-    if (stripped.includes('-') && TABLE_SEPARATOR.test(stripped)) continue;
+    if (stripped.startsWith('```') || stripped.startsWith('~~~')) {
+      inCode = !inCode;
+      out.push(stripped.slice(0, 3));
+      continue;
+    }
 
+    if (inCode) {
+      out.push(line);
+      continue;
+    }
+
+    if (!stripped) {
+      out.push('');
+      continue;
+    }
+    if (METADATA_LINE.test(stripped)) continue;
+
+    // Keep markdown tables as readable bullet rows.
+    if (stripped.includes('-') && TABLE_SEPARATOR.test(stripped)) continue;
     if (stripped.startsWith('|') && (stripped.match(/\|/g)?.length ?? 0) >= 2) {
       const cells = stripped
         .replace(/^\|/, '')
@@ -54,16 +67,30 @@ function sanitizeContent(raw: string): string {
       line = cells.length ? `- ${cells.join(' — ')}` : '';
       stripped = line.trim();
       if (!stripped) continue;
+      out.push(line);
+      continue;
     }
 
-    if (stripped.length >= 3 && DIAGRAM_LINE.test(stripped)) continue;
+    // Keep ASCII diagram / flow lines as monospace code-ish paragraphs.
+    if (stripped.length >= 3 && DIAGRAM_LINE.test(stripped)) {
+      out.push('```');
+      out.push(line);
+      out.push('```');
+      continue;
+    }
+
+    // Drop AI instruction placeholders that leaked into content.
+    if (
+      /^(explain|provide|discuss|write|describe|cover|include)\s+(what|why|how|a|an|the|at\s+least|all|key|this)/i.test(
+        stripped
+      )
+    ) {
+      continue;
+    }
 
     line = line
-      .replace(/`+/g, '')
       .replace(ARROWS_RIGHT, '->')
       .replace(ARROWS_LEFT, '<-')
-      .replace(BOX_CHARS, '')
-      .replace(/\|/g, ' ')
       .replace(/[ \t]{2,}/g, ' ')
       .replace(/\s+$/, '');
     out.push(line);

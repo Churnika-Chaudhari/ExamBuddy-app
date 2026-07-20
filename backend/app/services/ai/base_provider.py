@@ -233,14 +233,8 @@ class GeminiProvider(BaseAIProvider):
         return model_name.startswith("gemini-2.5")
 
     @staticmethod
-    def _salvage_notes_json(text: str) -> dict[str, Any] | None:
-        """
-        Recover the "notes" (and "summary") fields from a JSON blob that failed
-        to parse — usually because the model hit the output-token cap and the
-        string was cut off before the closing brace. Without this, truncated
-        responses surface to the user as raw `{"notes": "...` fragments.
-        """
-        match = re.search(r'"notes"\s*:\s*"', text)
+    def _extract_json_string_field(text: str, field: str) -> str | None:
+        match = re.search(rf'"{re.escape(field)}"\s*:\s*"', text)
         if not match:
             return None
 
@@ -258,17 +252,50 @@ class GeminiProvider(BaseAIProvider):
             chars.append(ch)
             i += 1
 
-        notes = "".join(chars).strip()
+        value = "".join(chars).strip()
+        return value or None
+
+    @staticmethod
+    def _salvage_notes_json(text: str) -> dict[str, Any] | None:
+        """
+        Recover useful fields from a JSON blob that failed to parse — usually
+        because the model hit the output-token cap mid-document.
+        """
+        structured_fields = (
+            "topic",
+            "definition",
+            "introduction",
+            "whyUsed",
+            "detailedExplanation",
+            "working",
+            "workingPrinciple",
+            "architecture",
+            "stepByStep",
+            "example",
+            "formula",
+            "diagram",
+            "syntax",
+            "algorithm",
+            "flow",
+            "summary",
+        )
+        salvaged: dict[str, Any] = {}
+        for field in structured_fields:
+            value = GeminiProvider._extract_json_string_field(text, field)
+            if value:
+                salvaged[field] = value
+
+        if salvaged.get("definition") or salvaged.get("detailedExplanation"):
+            return salvaged
+
+        notes = GeminiProvider._extract_json_string_field(text, "notes")
         if not notes:
             return None
 
         result: dict[str, Any] = {"notes": notes}
-        summary_match = re.search(r'"summary"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
-        if summary_match:
-            try:
-                result["summary"] = json.loads('"' + summary_match.group(1) + '"')
-            except json.JSONDecodeError:
-                pass
+        summary = GeminiProvider._extract_json_string_field(text, "summary")
+        if summary:
+            result["summary"] = summary
         return result
 
     @staticmethod
@@ -292,6 +319,9 @@ class GeminiProvider(BaseAIProvider):
         salvaged = GeminiProvider._salvage_notes_json(text)
         if salvaged:
             return salvaged
+        # Last resort: if the model returned markdown notes instead of JSON.
+        if text.lstrip().startswith("#"):
+            return {"notes": text}
         return {"notes": text}
 
     @staticmethod

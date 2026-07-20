@@ -14,6 +14,7 @@ from app.repositories.generated_notes_repository import (
 from app.repositories.notes_repository import NotesRepository
 from app.repositories.stats_repository import StatsRepository
 from app.services.ai.ai_service import AIService
+from app.services.ai.notes_sanitizer import is_placeholder_notes
 from app.services.llm_service import compact_analysis_context, extract_pyq_questions_for_topic
 from app.services.ai.prompts import PROMPT_VERSION
 from app.services.generated_note_mapper import map_generated_note
@@ -91,8 +92,19 @@ class NotesService:
                 user_id, topic_key, analysis_id=analysis_id
             )
             if cached and cached.get("notes"):
-                cached_version = (cached.get("ai_metadata") or {}).get("prompt_version")
-                if cached_version == PROMPT_VERSION:
+                cached_meta = cached.get("ai_metadata") or {}
+                cached_version = cached_meta.get("prompt_version")
+                cached_notes = str(cached.get("notes") or "")
+                # Skip stale / failed / placeholder cache so Gemini can regenerate.
+                skip_cache = (
+                    cached_version != PROMPT_VERSION
+                    or is_placeholder_notes(cached_notes)
+                    or (
+                        cached_meta.get("provider") == "local"
+                        and bool(cached_meta.get("generation_error") or cached_meta.get("ai_error"))
+                    )
+                )
+                if not skip_cache:
                     logger.info("Returning cached notes for topic=%s", topic)
                     return map_generated_note(cached, cached=True)
 
