@@ -64,6 +64,10 @@ def is_structured_notes_result(data: dict[str, Any]) -> bool:
     """True when the AI returned section fields instead of a plain notes string."""
     if not data:
         return False
+    from app.services.notes_engine.markdown_formatter import is_exam_notes_result
+
+    if is_exam_notes_result(data):
+        return True
     if data.get("notes") and not any(data.get(f) for f in STRUCTURED_NOTE_FIELDS if f != "topic"):
         return False
     markers = (
@@ -81,6 +85,9 @@ def is_structured_notes_result(data: dict[str, Any]) -> bool:
         "vivaQuestions",
         "interviewQuestions",
         "keyPoints",
+        "whyItMatters",
+        "importantExamPoints",
+        "thirtySecondRevision",
     )
     return any(data.get(key) for key in markers)
 
@@ -248,7 +255,15 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
 
 
 def structured_notes_to_markdown(data: dict[str, Any]) -> str:
-    """Render clean textbook-style structured JSON into markdown."""
+    """Render structured JSON into markdown (exam format preferred)."""
+    from app.services.notes_engine.markdown_formatter import (
+        format_exam_notes_markdown,
+        is_exam_notes_result,
+    )
+
+    if is_exam_notes_result(data) or data.get("whyItMatters") or data.get("importantExamPoints"):
+        return format_exam_notes_markdown(data)
+
     topic = _as_text(data.get("topic") or data.get("title") or "Study Topic")
     lines: list[str] = [f"# {topic}", ""]
 

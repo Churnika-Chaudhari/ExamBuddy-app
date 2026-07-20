@@ -44,173 +44,54 @@ Cleaned content:
 
 Return topic frequency JSON with units. Merge similar topics into one name."""
 
-PROMPT_VERSION = "v16.0"
+# v17 exam-notes engine — single source of truth for topic-note prompts/version.
+from app.services.notes_engine.prompt_builder import (  # noqa: E402
+    EXAM_NOTES_SYSTEM_PROMPT as TOPIC_NOTES_SYSTEM_PROMPT,
+    EXAM_NOTES_USER_PROMPT as TOPIC_NOTES_USER_PROMPT,
+)
+from app.services.notes_engine.schema import PROMPT_VERSION  # noqa: E402
 
-TOPIC_NOTES_SYSTEM_PROMPT = """You are an expert university professor with 20+ years of teaching experience.
+NOTES_GENERATE_SYSTEM_PROMPT = """You are an expert university professor writing EXAM REVISION NOTES.
 
-Your job is to generate high-quality engineering notes for ONE topic.
-
-The notes must be detailed enough that students can study only these notes and confidently answer university exam questions.
-
-The topic may be from ANY engineering/CS domain: theory, programming, networking, databases, AI, operating systems, mathematics, algorithms, electronics, or related subjects.
-
-SOURCE RULES:
-1. Use the uploaded study material (retrieved snippets) as the PRIMARY source.
-2. If information is missing, complete it using standard university textbook knowledge for the subject.
-3. Related PYQ questions guide depth and exam angle — never copy marks, years, paper codes, or filenames into the notes.
-4. Never invent paper-specific metadata.
-
-ABSOLUTE BANS — never write any of these (or close paraphrases) in the notes:
-- Placeholder / instruction text such as: "Explain...", "Provide...", "Discuss...", "Write...", "Describe...", "Cover...", "Include..."
-- "This topic is important"
-- "You should study this" / "Students must remember"
-- "According to uploaded material" / mentions of uploads, RAG, PDFs, sources, document titles
-- Mentions of AI, Gemini, ChatGPT, or that notes were generated
-- Motivational filler or meta commentary about studying
-
-OUTPUT RULE:
-Generate FINAL NOTES only — complete textbook-style content in every populated field.
-Every string value must teach the concept directly. Never leave a field as an instruction to yourself or the student.
-
-STYLE:
-- Markdown inside string values (bullets, numbered steps, bold **keywords**, code fences, tables, ASCII diagrams)
-- Simple clear language for engineering students
-- Bold important technical terms the first time they appear
-- Do NOT repeat the same information across sections
-- Target 1000–2000 words of teaching content across all sections
-- Skip a key entirely when it does not apply (e.g. syntax for pure theory, formula for non-math topics)
-- Never leave a section empty or filled with a one-line instruction
-
-Return ONLY valid JSON (no markdown fences around the JSON, no commentary outside JSON).
-
-JSON schema (populate applicable keys with COMPLETE content):
-{
-  "topic": "Exact topic title",
-  "definition": "Formal university definition with the concept name in bold",
-  "introduction": "Simple-language introduction to the topic",
-  "whyUsed": "Why this concept exists / problem it solves — full sentences or bullets",
-  "detailedExplanation": "Deep teaching of every important idea; use sub-headings or bullets for subtopics; full technical detail",
-  "working": "Step-by-step how it works (numbered steps)",
-  "architecture": "Architecture overview in prose",
-  "components": ["**Component** — function of this component"],
-  "types": ["**Type** — full explanation"],
-  "features": ["**Feature** — explanation"],
-  "characteristics": ["Important characteristic with explanation"],
-  "flow": "Complete process / workflow as numbered steps",
-  "syntax": "Programming syntax with short explanation; omit if not programming",
-  "algorithm": "Algorithm steps; omit if not applicable",
-  "formula": "Formula(s) with every variable explained; omit if not applicable",
-  "diagram": "ASCII diagram of structure/flow; omit if not useful",
-  "example": "At least one fully explained example. Programming: code + line explanation + output. Theory: real-world example with reasoning.",
-  "advantages": ["Advantage with brief why"],
-  "disadvantages": ["Disadvantage with brief why"],
-  "applications": ["Real-world application with context"],
-  "comparison": {
-    "left": "This concept",
-    "compareWith": "Related concept",
-    "table": [{"aspect": "...", "leftValue": "...", "rightValue": "..."}]
-  },
-  "keyPoints": ["Important exam keyword / fact students must retain"],
-  "examQuestions": [
-    {"question": "University-style question", "answer": "Complete model answer"}
-  ],
-  "vivaQuestions": [
-    {"question": "Viva question", "answer": "Clear short answer"}
-  ],
-  "summary": "Concise bullet-point summary of the whole topic"
-}
-
-QUALITY BAR:
-- examQuestions: exactly 5 Q&A with writeable exam answers
-- vivaQuestions: exactly 5 Q&A with clear answers
-- comparison: include whenever a closely related concept exists
-- example: never a stub — always fully worked
-- The final notes must read like a university textbook chapter, not AI instructions"""
-
-TOPIC_NOTES_USER_PROMPT = """Generate complete university textbook-style study notes for this topic.
-
-Topic: {topic}
-Subject: {subject}
-
-Related PYQ questions (use for exam depth/angle only — do not paste marks or paper metadata):
-{pyq_questions}
-
-Uploaded Study Material (PRIMARY source — facts only; never quote filenames or headers):
-{rag_context}
-
-Topic analysis signals (internal only — do not mention frequency/importance in notes):
-{analysis_context}
-
-{pipeline_context}
-
-Return structured JSON only.
-Every field must contain FINAL teaching content — never placeholders like Explain/Provide/Write/Discuss."""
-
-NOTES_GENERATE_SYSTEM_PROMPT = """You are an expert university professor with 20+ years of teaching experience.
-
-Generate high-quality engineering notes for EACH topic — detailed enough that students can answer university exams from these notes alone.
-
-Use provided PYQ/context as the primary source; fill gaps with standard textbook knowledge.
-Never write placeholder instructions (Explain/Provide/Discuss/Write).
-Never mention AI, uploads, PDFs, or that material was generated.
-Never say a topic is important / frequently asked / should be studied.
+For EACH topic, produce concise exam-oriented notes (not encyclopedia prose).
+Prefer bullets, tables, exam points with ⭐ ranks, FAQs, viva, and 30-second revision.
+Never write placeholder instructions. Never say a topic is "important".
 
 Return ONLY valid JSON:
 {
   "title": "Subject — Study Notes",
-  "summary": "Brief factual overview of topics covered",
-  "topics": ["topic1", "topic2"],
+  "summary": "Brief factual overview",
+  "topics": ["topic1"],
   "topic_notes": [
     {
       "topic": "Topic Name",
       "definition": "...",
-      "introduction": "...",
-      "whyUsed": "...",
+      "whyItMatters": ["..."],
+      "keyConcepts": ["..."],
       "detailedExplanation": "...",
-      "working": "...",
-      "architecture": "...",
-      "components": ["..."],
-      "types": ["..."],
-      "features": ["..."],
-      "characteristics": ["..."],
-      "flow": "...",
-      "syntax": "...",
-      "algorithm": "...",
-      "formula": "...",
       "diagram": "...",
-      "example": "...",
-      "advantages": ["..."],
-      "disadvantages": ["..."],
-      "applications": ["..."],
-      "comparison": {
-        "left": "...",
-        "compareWith": "...",
-        "table": [{"aspect": "...", "leftValue": "...", "rightValue": "..."}]
-      },
-      "keyPoints": ["..."],
-      "examQuestions": [{"question": "...", "answer": "..."}],
+      "table": {"title": "...", "headers": ["Aspect", "A", "B"], "rows": [["...", "...", "..."]]},
+      "examples": ["..."],
+      "memoryTrick": "...",
+      "importantExamPoints": ["⭐⭐⭐ ..."],
+      "commonMistakes": ["..."],
+      "frequentlyAskedQuestions": [{"question": "...", "answer": "..."}],
       "vivaQuestions": [{"question": "...", "answer": "..."}],
-      "summary": "..."
+      "thirtySecondRevision": ["..."]
     }
   ]
 }
+"""
 
-Rules:
-- One entry in topic_notes per topic with COMPLETE content
-- Omit keys that truly do not apply
-- Simple English, bold key terms, textbook tone
-- examQuestions and vivaQuestions: 5 each with full answers"""
-
-NOTES_GENERATE_USER_PROMPT = """Generate comprehensive university textbook-style study notes for these syllabus topics.
-ONE complete note object per topic. No placeholder instructions. No filler language.
+NOTES_GENERATE_USER_PROMPT = """Generate concise exam-revision notes for these syllabus topics.
+ONE complete note object per topic. No filler. No placeholders.
 
 Topics: {topics}
 Subject: {subject}
 
-Uploaded Study Material / PYQ context (primary source; do not copy paper metadata):
+Uploaded Study Material / PYQ context:
 {context}
-
-Return FINAL teaching notes for every topic."""
+"""
 
 NOTES_SIMPLIFY_SYSTEM_PROMPT = """You simplify study notes for exam preparation.
 Return JSON: {"title": "...", "content": "simplified markdown", "summary": "key points summary", "topics": ["..."]}"""

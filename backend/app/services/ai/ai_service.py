@@ -20,6 +20,8 @@ from app.services.ai.notes_structured import (
     is_structured_notes_result,
     structured_notes_to_markdown,
 )
+from app.services.notes_engine.pipeline import ExamNotesPipeline
+from app.services.notes_engine.markdown_formatter import format_exam_notes_markdown
 from app.services.ai.prompts import (
     NOTES_GENERATE_SYSTEM_PROMPT,
     NOTES_GENERATE_USER_PROMPT,
@@ -30,8 +32,6 @@ from app.services.ai.prompts import (
     PYQ_ANALYSIS_USER_PROMPT,
     QUIZ_GENERATE_SYSTEM_PROMPT,
     QUIZ_GENERATE_USER_PROMPT,
-    TOPIC_NOTES_SYSTEM_PROMPT,
-    TOPIC_NOTES_USER_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -295,130 +295,82 @@ class AIService:
         structured: dict[str, Any] = {
             "topic": topic,
             "definition": (
-                f"**{topic}** is a core concept in {subject_label}. "
-                f"It refers to the principles, methods, and practical techniques associated with {topic} "
-                f"that students apply in university theory and practical examinations."
+                f"**{topic}** is a core {subject_label} concept covering the principles and techniques "
+                f"used to analyse and solve problems related to {topic}."
             ),
-            "introduction": (
-                f"{topic} appears across {subject_label} syllabi because it connects fundamental theory "
-                f"with real system behaviour. These notes present the concept in a clear, exam-ready form."
-            ),
-            "whyUsed": (
-                f"{topic} is studied to solve practical problems in {subject_label}, to build correct system "
-                f"design intuition, and to answer definition, working, comparison, and application questions "
-                f"in university exams."
-            ),
+            "whyItMatters": [
+                f"Appears in {subject_label} theory and viva questions",
+                "Supports definition + working + comparison style answers",
+                "Links directly to related syllabus concepts",
+            ],
+            "keyConcepts": [
+                f"**Definition** — precise meaning of {topic}",
+                f"**Working** — ordered steps / mechanism of {topic}",
+                f"**Use-cases** — where {topic} is applied",
+            ],
             "detailedExplanation": material
             or (
-                f"**{topic}** should be understood at three levels:\n\n"
-                f"1. **Concept** — what {topic} means and which problem it addresses.\n"
-                f"2. **Mechanism** — how {topic} works step by step, including important components and rules.\n"
-                f"3. **Use** — where {topic} is applied, with at least one concrete example and known limitations.\n\n"
-                f"In exams, start with a formal definition, then give working/mechanism, then one short example."
+                f"- Start with a formal definition of **{topic}**\n"
+                f"- List the working steps or components\n"
+                f"- Add one short example\n"
+                f"- End with one comparison or limitation if asked"
             ),
-            "working": (
-                f"1. Identify the problem that **{topic}** is meant to solve.\n"
-                f"2. State the core principle or model behind {topic}.\n"
-                f"3. Break the process into ordered stages or components.\n"
-                f"4. Trace one complete example from input/initial state to final result.\n"
-                f"5. Note constraints, assumptions, and common failure cases."
-            ),
-            "example": (
-                f"Consider a typical university question on **{topic}**.\n\n"
-                f"**Given:** A standard exam-style scenario involving {topic}.\n"
-                f"**Approach:** Write the definition, list the working steps, and apply them to the given data.\n"
-                f"**Result:** State the final answer clearly and mention one advantage or limitation if asked.\n\n"
-                + (
-                    f"**From study material:**\n{material[:900]}"
-                    if material
-                    else f"When AI keys are configured, this section is replaced with a fully worked numerical or code example for {topic}."
-                )
-            ),
-            "advantages": [
-                f"Provides a clear framework for analysing problems related to {topic}",
-                f"Supports both theoretical answers and practical/design questions in exams",
-                f"Helps compare {topic} with related concepts using standard criteria",
+            "examples": [
+                f"Exam-style: define {topic}, write 4–5 working steps, finish with one example."
             ],
-            "disadvantages": [
-                f"Can be misunderstood if only the definition is memorised without working steps",
-                f"May involve assumptions that do not hold in every real system",
-                f"Requires careful wording in exams to avoid mixing {topic} with similar topics",
+            "memoryTrick": f"D-W-E-C for {topic}: Definition → Working → Example → Comparison",
+            "importantExamPoints": [
+                f"⭐⭐⭐ Formal definition of **{topic}**",
+                f"⭐⭐⭐ Working / mechanism of {topic}",
+                f"⭐⭐ One concrete example",
+                f"⭐⭐ Common mistakes / related-concept confusion",
+                f"⭐ Advantages / limitations when asked",
             ],
-            "applications": [
-                f"University exam answers requiring definition, working, and example of {topic}",
-                f"Practical / lab work and design questions involving {topic}",
-                f"Comparing {topic} with related techniques in viva and interviews",
+            "commonMistakes": [
+                f"Memorising only the name of {topic} without working steps",
+                f"Mixing {topic} with a closely related concept in the same unit",
             ],
-            "keyPoints": [
-                f"Formal definition of **{topic}**",
-                f"Why {topic} is needed",
-                f"Step-by-step working of {topic}",
-                f"One complete example",
-                f"Advantages, limitations, and related concept comparison",
-            ],
-            "examQuestions": [
+            "frequentlyAskedQuestions": [
                 {
                     "question": f"Define {topic}.",
-                    "answer": f"**{topic}** is a {subject_label} concept describing the principles and techniques used to address problems associated with {topic}.",
-                },
-                {
-                    "question": f"Why is {topic} needed?",
-                    "answer": f"{topic} is needed to handle practical limitations and design requirements in {subject_label}, and to provide a systematic method students can apply in exams and real systems.",
+                    "answer": f"**{topic}** is a {subject_label} concept describing the principles used for problems related to {topic}.",
                 },
                 {
                     "question": f"Explain the working of {topic}.",
-                    "answer": f"State the problem, list the ordered stages of {topic}, describe the role of each stage/component, and finish with the expected outcome.",
+                    "answer": f"State the goal, list ordered stages/components of {topic}, and end with the expected result.",
                 },
                 {
                     "question": f"Give one example of {topic}.",
-                    "answer": f"Choose a simple exam-style case, apply the working steps of {topic}, and show the final result with brief reasoning.",
-                },
-                {
-                    "question": f"State advantages and disadvantages of {topic}.",
-                    "answer": f"Advantages include clarity, exam applicability, and comparison value. Disadvantages include risk of rote learning, assumption sensitivity, and confusion with related topics.",
+                    "answer": f"Pick a simple case, apply the working steps of {topic}, and state the final outcome briefly.",
                 },
             ],
             "vivaQuestions": [
-                {
-                    "question": f"What is {topic}?",
-                    "answer": f"It is the {subject_label} concept that defines and applies techniques related to {topic}.",
-                },
-                {
-                    "question": f"Where is {topic} used?",
-                    "answer": f"In academic problems, practical designs, and systems that need the capabilities associated with {topic}.",
-                },
-                {
-                    "question": f"Name one important point about {topic}.",
-                    "answer": f"Always connect the definition of {topic} with its working steps and one example.",
-                },
-                {
-                    "question": f"What should you write first in an exam answer on {topic}?",
-                    "answer": "A precise formal definition, then working, then example.",
-                },
-                {
-                    "question": f"How do you avoid common mistakes on {topic}?",
-                    "answer": f"Do not confuse {topic} with similar concepts; keep definition, working, and example clearly separated.",
-                },
+                {"question": f"What is {topic}?", "answer": f"A core {subject_label} concept used to handle problems involving {topic}."},
+                {"question": f"Name one key point about {topic}.", "answer": "Always pair definition with working steps."},
+                {"question": "What should you write first in a long answer?", "answer": "Formal definition, then working, then example."},
             ],
-            "summary": (
-                f"- **{topic}** is a core {subject_label} topic\n"
-                f"- Learn definition, need, working, and one example\n"
-                f"- Remember advantages, limitations, and exam wording\n"
-                f"- Compare with related concepts when asked"
-            ),
+            "thirtySecondRevision": [
+                f"**{topic}** = core {subject_label} concept",
+                "Definition first",
+                "Then working steps",
+                "One example",
+                "Watch related-concept confusion",
+                "Use comparison table if asked",
+            ],
         }
 
-        notes = structured_notes_to_markdown(structured)
+        notes = format_exam_notes_markdown(structured)
         meta: dict[str, Any] = {
             "provider": "local",
             "model": "rule-based",
             "prompt_version": PROMPT_VERSION,
             "rag_chunk_count": 1 if material else 0,
             "generation_mode": "local_fallback",
+            "notes_engine": "exam_v17",
         }
         return {
             "notes": notes,
-            "summary": f"Study notes for {topic}. Configure GEMINI_API_KEY for richer AI-generated textbook notes.",
+            "summary": f"Exam revision notes for {topic}. Configure GEMINI_API_KEY for full AI notes.",
             "structured": structured,
         }, meta
 
@@ -432,7 +384,6 @@ class AIService:
             text = sanitize_note_text(raw).strip()
             if len(text) < 40:
                 continue
-            # Skip leftover instruction-like lines from bad templates.
             if re.match(
                 r"^(explain|provide|discuss|write|describe|cover|include)\b",
                 text,
@@ -448,31 +399,43 @@ class AIService:
         return joined[:limit].rstrip()
 
     def _normalize_topic_result(self, result: dict[str, Any], *, topic: str = "") -> dict[str, Any]:
-        structured: dict[str, Any] | None = None
-
-        if is_structured_notes_result(result):
-            structured = extract_structured_payload(result)
-            if topic and not structured.get("topic"):
-                structured["topic"] = topic
-            notes = structured_notes_to_markdown(structured)
-            summary = clean_notes_markdown(str(structured.get("summary") or result.get("summary") or "")).strip()
+        """Normalize LLM JSON through the exam-notes postprocess pipeline."""
+        pipeline = ExamNotesPipeline(max_retries=1)
+        try:
+            processed = pipeline.postprocess(result, topic=topic)
             return {
-                "notes": clean_notes_markdown(notes),
-                "summary": summary or None,
-                "structured": structured,
+                "notes": clean_notes_markdown(processed["notes"]),
+                "summary": clean_notes_markdown(str(processed.get("summary") or "")).strip() or None,
+                "structured": processed.get("structured"),
+                "quality": processed.get("quality"),
             }
+        except Exception:
+            # Legacy structured / plain markdown fallback for unexpected shapes
+            if is_structured_notes_result(result):
+                structured = extract_structured_payload(result)
+                if topic and not structured.get("topic"):
+                    structured["topic"] = topic
+                notes = structured_notes_to_markdown(structured)
+                summary = clean_notes_markdown(
+                    str(structured.get("summary") or result.get("summary") or "")
+                ).strip()
+                return {
+                    "notes": clean_notes_markdown(notes),
+                    "summary": summary or None,
+                    "structured": structured,
+                }
 
-        notes = (
-            result.get("notes")
-            or result.get("content")
-            or result.get("markdown")
-            or ""
-        )
-        if isinstance(notes, dict):
-            notes = str(notes)
-        notes = clean_notes_markdown(str(notes))
-        summary = clean_notes_markdown(str(result.get("summary") or "")).strip()
-        return {"notes": notes, "summary": summary or None, "structured": None}
+            notes = (
+                result.get("notes")
+                or result.get("content")
+                or result.get("markdown")
+                or ""
+            )
+            if isinstance(notes, dict):
+                notes = str(notes)
+            notes = clean_notes_markdown(str(notes))
+            summary = clean_notes_markdown(str(result.get("summary") or "")).strip()
+            return {"notes": notes, "summary": summary or None, "structured": None}
 
     async def generate_topic_notes(
         self,
@@ -495,57 +458,52 @@ class AIService:
                 meta["rag_sources"] = rag_sources[:8]
             return result, meta
 
-        last_exc: Exception | None = None
-        for attempt in (1, 2):
-            try:
-                result, metadata = await self.llm_service.generate_topic_notes_json(
-                    topic,
-                    rag_context=rag_context,
-                    analysis_context=analysis_context,
-                    subject=subject,
-                    pipeline_context=pipeline_context,
-                    exam_priority=exam_priority,
-                    pyq_questions=pyq_questions,
-                )
-                result = self._normalize_topic_result(result, topic=topic)
-                notes_text = (result.get("notes") or "").strip()
-                if not notes_text:
-                    raise ExternalServiceError("AI returned empty notes content")
-                if is_placeholder_notes(notes_text):
-                    raise ExternalServiceError(
-                        "AI returned instruction placeholders instead of study notes"
-                    )
+        async def _generate_json(system_prompt: str, user_prompt: str):
+            return await self.llm_service._generate_json(
+                system_prompt,
+                user_prompt,
+                max_output_tokens=GEMINI_MAX_NOTES_TOKENS,
+                temperature=0.3,
+                top_p=0.9,
+            )
 
-                if rag_sources:
-                    metadata["rag_sources"] = rag_sources[:8]
-                    metadata["rag_chunk_count"] = len(rag_sources)
-                metadata["generation_mode"] = "rag" if rag_context.strip() else "ai_only"
-                metadata["attempt"] = attempt
-                if result.get("structured"):
-                    metadata["structured_notes"] = result["structured"]
-                return result, metadata
-            except Exception as exc:
-                last_exc = exc
-                logger.error(
-                    "Topic notes generation failed attempt=%s topic=%s: %s",
-                    attempt,
-                    topic,
-                    exc,
+        try:
+            pipeline = ExamNotesPipeline(max_retries=2)
+            result, metadata = await pipeline.run(
+                topic=topic,
+                generate_json=_generate_json,
+                rag_context=rag_context,
+                analysis_context=analysis_context,
+                subject=subject,
+                exam_priority=exam_priority,
+                pyq_questions=pyq_questions,
+                pipeline_context=pipeline_context,
+            )
+            result["notes"] = clean_notes_markdown(result.get("notes") or "")
+            if not result["notes"]:
+                raise ExternalServiceError("AI returned empty notes content")
+            if is_placeholder_notes(result["notes"]):
+                raise ExternalServiceError(
+                    "AI returned instruction placeholders instead of study notes"
                 )
 
-        logger.error(
-            "Topic notes falling back to local template topic=%s error=%s",
-            topic,
-            last_exc,
-        )
-        result, meta = self._local_topic_notes(
-            topic, subject, rag_context=rag_context, analysis_context=analysis_context
-        )
-        meta["generation_error"] = _friendly_ai_error(str(last_exc or "unknown"))
-        meta["ai_error"] = str(last_exc or "unknown")
-        if rag_sources:
-            meta["rag_sources"] = rag_sources[:8]
-        return result, meta
+            if rag_sources:
+                metadata["rag_sources"] = rag_sources[:8]
+                metadata["rag_chunk_count"] = metadata.get("rag_chunk_count") or len(rag_sources)
+            metadata["generation_mode"] = "rag" if rag_context.strip() else "ai_only"
+            if result.get("structured"):
+                metadata["structured_notes"] = result["structured"]
+            return result, metadata
+        except Exception as exc:
+            logger.error("Exam notes pipeline failed topic=%s: %s", topic, exc)
+            result, meta = self._local_topic_notes(
+                topic, subject, rag_context=rag_context, analysis_context=analysis_context
+            )
+            meta["generation_error"] = _friendly_ai_error(str(exc))
+            meta["ai_error"] = str(exc)
+            if rag_sources:
+                meta["rag_sources"] = rag_sources[:8]
+            return result, meta
 
     async def stream_topic_notes(
         self,

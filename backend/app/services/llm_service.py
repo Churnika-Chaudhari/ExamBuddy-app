@@ -28,9 +28,9 @@ from app.services.ai.prompts import (
     PROMPT_VERSION,
     PYQ_ANALYSIS_SYSTEM_PROMPT,
     PYQ_ANALYSIS_USER_PROMPT,
-    TOPIC_NOTES_SYSTEM_PROMPT,
-    TOPIC_NOTES_USER_PROMPT,
 )
+from app.services.notes_engine.prompt_builder import build_exam_notes_prompts
+
 
 logger = logging.getLogger(__name__)
 
@@ -197,21 +197,20 @@ class LLMService:
         exam_priority: str = "",
         pyq_questions: str = "",
     ) -> tuple[str, str]:
-        user_prompt = TOPIC_NOTES_USER_PROMPT.format(
+        return build_exam_notes_prompts(
             topic=topic,
             subject=subject or "General",
-            pyq_questions=trim_context(pyq_questions, MAX_PYQ_QUESTIONS_CHARS)
-            or (
-                f"No direct PYQ question text matched for '{topic}'. "
-                "Produce complete textbook notes covering definition, working, example, comparison, and exam Q&A."
-            ),
-            rag_context=trim_context(rag_context, MAX_RAG_CONTEXT_CHARS)
-            or "No uploaded study material snippets available — complete the notes using accurate standard university textbook knowledge for the subject.",
+            rag_context=trim_context(rag_context, MAX_RAG_CONTEXT_CHARS),
             analysis_context=trim_context(analysis_context, MAX_ANALYSIS_CONTEXT_CHARS)
             or "No additional analysis signals.",
             pipeline_context=trim_context(pipeline_context, MAX_PIPELINE_CONTEXT_CHARS),
+            exam_priority=exam_priority.strip() or "Standard syllabus priority",
+            pyq_questions=trim_context(pyq_questions, MAX_PYQ_QUESTIONS_CHARS)
+            or (
+                f"No direct PYQ text for '{topic}'. "
+                "Cover definition, key concepts, comparison, common mistakes, and typical 5/10-mark angles."
+            ),
         )
-        return TOPIC_NOTES_SYSTEM_PROMPT, user_prompt
 
     async def generate_topic_notes_json(
         self,
