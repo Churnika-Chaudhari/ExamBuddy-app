@@ -122,7 +122,9 @@ class ExamNotesPipeline:
         active_trace.mark("validate", ok=True)
 
         quality = score_notes_quality(payload or structured, markdown)
-        summary_bits = payload.get("thirtySecondRevision") if payload else None
+        summary_bits = None
+        if payload:
+            summary_bits = payload.get("revisionSheet") or payload.get("thirtySecondRevision")
         if isinstance(summary_bits, list):
             summary = " • ".join(str(b) for b in summary_bits[:6])
         else:
@@ -173,7 +175,7 @@ class ExamNotesPipeline:
                 metadata = dict(metadata or {})
                 metadata["prompt_version"] = PROMPT_VERSION
                 metadata["attempt"] = attempt
-                metadata["notes_engine"] = "exam_v17"
+                metadata["notes_engine"] = "professor_alex_v18"
                 metadata["quality"] = processed["quality"]
                 metadata.update(trace.as_metadata())
                 metadata["rag_chunk_count"] = prep["prepared"]["chunk_count"]

@@ -294,68 +294,140 @@ class AIService:
 
         structured: dict[str, Any] = {
             "topic": topic,
-            "definition": (
-                f"**{topic}** is a core {subject_label} concept covering the principles and techniques "
-                f"used to analyse and solve problems related to {topic}."
+            "whatIsIt": (
+                f"Think of **{topic}** as a core idea in {subject_label}. "
+                f"In simple words, it is the set of principles and techniques used to understand "
+                f"and solve problems that involve {topic}. "
+                f"You do not need fancy jargon yet — start by asking: what problem does {topic} fix, "
+                f"and what steps does it follow?"
             ),
-            "whyItMatters": [
-                f"Appears in {subject_label} theory and viva questions",
-                "Supports definition + working + comparison style answers",
-                "Links directly to related syllabus concepts",
-            ],
-            "keyConcepts": [
-                f"**Definition** — precise meaning of {topic}",
-                f"**Working** — ordered steps / mechanism of {topic}",
-                f"**Use-cases** — where {topic} is applied",
-            ],
-            "detailedExplanation": material
-            or (
-                f"- Start with a formal definition of **{topic}**\n"
-                f"- List the working steps or components\n"
-                f"- Add one short example\n"
-                f"- End with one comparison or limitation if asked"
+            "whyNeeded": (
+                f"Without **{topic}**, students often jump into formulas or code with no mental model. "
+                f"Exams and labs expect you to explain why {topic} exists, how it works, and when to use it. "
+                f"This section exists so you can answer that 'why' confidently."
             ),
-            "examples": [
-                f"Exam-style: define {topic}, write 4–5 working steps, finish with one example."
+            "realLifeAnalogy": (
+                f"Imagine a school library. Students (requests) need books (resources). "
+                f"**{topic}** is like the librarian's system that decides how books are found, lent, "
+                f"and returned so the library stays usable — even when many students arrive at once."
+            ),
+            "coreConcept": (
+                f"1. Name the goal of **{topic}**\n"
+                f"2. List its main parts / ideas\n"
+                f"3. Connect each part to the problem it solves\n"
+                f"4. Only then move to formulas, diagrams, or code"
+            ),
+            "howItWorks": (
+                f"1. Identify the input / situation where {topic} is used\n"
+                f"2. Apply the main rule or mechanism of {topic}\n"
+                f"3. Follow each intermediate step in order\n"
+                f"4. Check the final result against the goal"
+            ),
+            "architecture": f"At a high level, {topic} has a goal, a few cooperating parts, and a clear flow from input to result.",
+            "components": [
+                {
+                    "name": "Goal",
+                    "purpose": f"States what {topic} is trying to achieve",
+                    "responsibility": "Keeps the answer focused",
+                    "interaction": "Guides every later step",
+                    "simpleExplanation": "The 'why we are here' of the topic",
+                },
+                {
+                    "name": "Mechanism",
+                    "purpose": f"Shows how {topic} actually operates",
+                    "responsibility": "Produces the working steps",
+                    "interaction": "Uses the goal and feeds the example",
+                    "simpleExplanation": "The engine of the concept",
+                },
             ],
-            "memoryTrick": f"D-W-E-C for {topic}: Definition → Working → Example → Comparison",
-            "importantExamPoints": [
-                f"⭐⭐⭐ Formal definition of **{topic}**",
-                f"⭐⭐⭐ Working / mechanism of {topic}",
-                f"⭐⭐ One concrete example",
-                f"⭐⭐ Common mistakes / related-concept confusion",
-                f"⭐ Advantages / limitations when asked",
+            "diagram": (
+                f"Problem\n"
+                f"   |\n"
+                f"Need for {topic}\n"
+                f"   |\n"
+                f"Core idea + steps\n"
+                f"   |\n"
+                f"Example / result"
+            ),
+            "realWorldExample": (
+                material
+                or (
+                    f"Exam walkthrough: define {topic} in one sentence, write 4–5 working steps, "
+                    f"then finish with one short example and one limitation."
+                )
+            ),
+            "deepDive": (
+                material
+                or (
+                    f"For university depth on **{topic}**: pair the simple story with precise terms, "
+                    f"show one comparison with a related concept, and note where students confuse terms."
+                )
+            ),
+            "advantages": [
+                f"Gives a clear mental model for {topic} — so answers stay structured",
+                "Supports definition + working + example exam patterns",
             ],
+            "disadvantages": [
+                f"Local fallback notes are thinner than full AI lectures — configure GEMINI_API_KEY for full Professor Alex notes",
+            ],
+            "comparison": {
+                "title": f"{topic} vs related idea",
+                "headers": ["Aspect", topic, "Related concept"],
+                "rows": [
+                    ["Focus", f"Core idea of {topic}", "Often confused neighbour topic"],
+                    ["Exam tip", "Definition + working", "Know the difference clearly"],
+                ],
+            },
             "commonMistakes": [
-                f"Memorising only the name of {topic} without working steps",
-                f"Mixing {topic} with a closely related concept in the same unit",
-            ],
-            "frequentlyAskedQuestions": [
-                {
-                    "question": f"Define {topic}.",
-                    "answer": f"**{topic}** is a {subject_label} concept describing the principles used for problems related to {topic}.",
-                },
-                {
-                    "question": f"Explain the working of {topic}.",
-                    "answer": f"State the goal, list ordered stages/components of {topic}, and end with the expected result.",
-                },
-                {
-                    "question": f"Give one example of {topic}.",
-                    "answer": f"Pick a simple case, apply the working steps of {topic}, and state the final outcome briefly.",
-                },
+                f"Memorising only the name of {topic} without working steps — happens when students skip 'how it works'",
+                f"Mixing {topic} with a closely related concept — happens when comparison is never practised",
             ],
             "vivaQuestions": [
-                {"question": f"What is {topic}?", "answer": f"A core {subject_label} concept used to handle problems involving {topic}."},
-                {"question": f"Name one key point about {topic}.", "answer": "Always pair definition with working steps."},
-                {"question": "What should you write first in a long answer?", "answer": "Formal definition, then working, then example."},
+                {"question": f"What is {topic} in one sentence?", "answer": f"A core {subject_label} idea used to handle problems involving {topic}."},
+                {"question": f"Why do we need {topic}?", "answer": f"It solves a practical problem and gives a repeatable method for {topic}-related questions."},
+                {"question": f"How does {topic} work?", "answer": "State the goal, list ordered stages, and end with the expected result."},
+                {"question": "What should you write first in a long answer?", "answer": "Simple meaning, then why needed, then working steps, then example."},
             ],
-            "thirtySecondRevision": [
-                f"**{topic}** = core {subject_label} concept",
-                "Definition first",
-                "Then working steps",
-                "One example",
-                "Watch related-concept confusion",
-                "Use comparison table if asked",
+            "examQuestions": {
+                "longAnswer": [
+                    {
+                        "question": f"Explain {topic} with a neat diagram and one example.",
+                        "answer": f"Start with What is it?, Why needed?, How it works (numbered), one ASCII diagram, one example, close with one limitation.",
+                    }
+                ],
+                "shortAnswer": [
+                    {"question": f"Define {topic}.", "answer": f"**{topic}** is a {subject_label} concept for solving problems related to {topic}."},
+                    {"question": f"List two advantages of {topic}.", "answer": "Clear mental model; structured exam answers (definition + working + example)."},
+                ],
+            },
+            "mcqs": [
+                {
+                    "question": f"What should come first when explaining {topic}?",
+                    "options": ["Random formulas", "Simple meaning + why it exists", "Only disadvantages", "Only MCQ options"],
+                    "answer": "B",
+                    "explanation": "Understanding starts with meaning and purpose, then mechanism.",
+                }
+            ],
+            "memoryTricks": [
+                f"W-C-H-E for {topic}: What → Why → How → Example",
+            ],
+            "revisionSheet": [
+                f"**{topic}** = core {subject_label} idea",
+                "What is it? (simple)",
+                "Why needed? (problem it solves)",
+                "Analogy helps memory",
+                "Core concept in small parts",
+                "How it works = numbered steps",
+                "One real example",
+                "Know advantages + trade-offs",
+                "Compare with related concept",
+                "Revise viva + 1 long answer",
+            ],
+            "keyTakeaways": [
+                f"⭐⭐⭐ Must Know — simple meaning of **{topic}**",
+                f"⭐⭐⭐ Must Know — why {topic} exists + how it works",
+                f"⭐⭐ Important — one example + common mistakes",
+                f"⭐ Good to Know — comparison / limitations",
             ],
         }
 
@@ -366,11 +438,11 @@ class AIService:
             "prompt_version": PROMPT_VERSION,
             "rag_chunk_count": 1 if material else 0,
             "generation_mode": "local_fallback",
-            "notes_engine": "exam_v17",
+            "notes_engine": "professor_alex_v18",
         }
         return {
             "notes": notes,
-            "summary": f"Exam revision notes for {topic}. Configure GEMINI_API_KEY for full AI notes.",
+            "summary": f"Professor Alex lecture notes for {topic}. Configure GEMINI_API_KEY for full AI notes.",
             "structured": structured,
         }, meta
 

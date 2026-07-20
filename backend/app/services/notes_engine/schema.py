@@ -1,61 +1,69 @@
-"""Exam-oriented structured notes schema (v17)."""
+"""Professor Alex lecture-notes schema (v18)."""
 
 from __future__ import annotations
 
-PROMPT_VERSION = "v17.0"
+PROMPT_VERSION = "v18.0"
 
-# Canonical JSON fields returned by the exam-notes LLM call.
 EXAM_NOTE_FIELDS = (
     "topic",
-    "definition",
-    "whyItMatters",
-    "keyConcepts",
-    "detailedExplanation",
+    "whatIsIt",
+    "whyNeeded",
+    "realLifeAnalogy",
+    "coreConcept",
+    "howItWorks",
+    "architecture",
+    "components",
     "diagram",
-    "table",
-    "examples",
-    "memoryTrick",
-    "importantExamPoints",
+    "realWorldExample",
+    "deepDive",
+    "advantages",
+    "disadvantages",
+    "comparison",
     "commonMistakes",
-    "frequentlyAskedQuestions",
     "vivaQuestions",
-    "thirtySecondRevision",
-    "summary",
+    "examQuestions",
+    "mcqs",
+    "memoryTricks",
+    "revisionSheet",
+    "keyTakeaways",
 )
 
-# Accept legacy / alias keys from older generations.
+# Legacy + alias mapping into canonical v18 fields.
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
-    "whyItMatters": ("whyItMatters", "whyUsed", "why_used", "whyNeeded", "why_needed"),
-    "keyConcepts": ("keyConcepts", "key_concepts", "components", "types", "features"),
-    "detailedExplanation": (
-        "detailedExplanation",
-        "detailed_explanation",
-        "working",
-        "workingPrinciple",
-        "architecture",
-    ),
-    "examples": ("examples", "example", "realWorldExample", "real_world_example"),
-    "memoryTrick": ("memoryTrick", "memory_trick", "mnemonic"),
-    "importantExamPoints": (
-        "importantExamPoints",
-        "important_exam_points",
-        "keyPoints",
-        "key_points",
-        "examTips",
-    ),
+    "whatIsIt": ("whatIsIt", "definition", "introduction"),
+    "whyNeeded": ("whyNeeded", "whyItMatters", "whyUsed", "why_used"),
+    "realLifeAnalogy": ("realLifeAnalogy", "analogy"),
+    "coreConcept": ("coreConcept", "keyConcepts", "key_concepts"),
+    "howItWorks": ("howItWorks", "working", "workingPrinciple", "stepByStep", "flow"),
+    "architecture": ("architecture",),
+    "components": ("components", "types", "features"),
+    "diagram": ("diagram",),
+    "realWorldExample": ("realWorldExample", "examples", "example", "real_world_example"),
+    "deepDive": ("deepDive", "detailedExplanation", "detailed_explanation"),
+    "advantages": ("advantages",),
+    "disadvantages": ("disadvantages",),
+    "comparison": ("comparison", "table"),
     "commonMistakes": ("commonMistakes", "common_mistakes"),
-    "frequentlyAskedQuestions": (
-        "frequentlyAskedQuestions",
+    "vivaQuestions": ("vivaQuestions", "viva_questions", "interviewQuestions"),
+    "examQuestions": (
         "examQuestions",
+        "frequentlyAskedQuestions",
         "exam_questions",
         "universityQuestions",
     ),
-    "vivaQuestions": ("vivaQuestions", "viva_questions", "interviewQuestions"),
-    "thirtySecondRevision": (
+    "mcqs": ("mcqs", "multipleChoice"),
+    "memoryTricks": ("memoryTricks", "memoryTrick", "memory_trick", "mnemonic"),
+    "revisionSheet": (
+        "revisionSheet",
         "thirtySecondRevision",
         "thirty_second_revision",
-        "revisionSheet",
         "summary",
     ),
-    "table": ("table", "comparison"),
+    "keyTakeaways": (
+        "keyTakeaways",
+        "importantExamPoints",
+        "important_exam_points",
+        "keyPoints",
+        "examTips",
+    ),
 }

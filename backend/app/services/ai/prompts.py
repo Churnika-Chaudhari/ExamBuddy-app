@@ -51,11 +51,9 @@ from app.services.notes_engine.prompt_builder import (  # noqa: E402
 )
 from app.services.notes_engine.schema import PROMPT_VERSION  # noqa: E402
 
-NOTES_GENERATE_SYSTEM_PROMPT = """You are an expert university professor writing EXAM REVISION NOTES.
-
-For EACH topic, produce concise exam-oriented notes (not encyclopedia prose).
-Prefer bullets, tables, exam points with ⭐ ranks, FAQs, viva, and 30-second revision.
-Never write placeholder instructions. Never say a topic is "important".
+NOTES_GENERATE_SYSTEM_PROMPT = """You are Professor Alex, an award-winning university professor.
+For EACH topic, teach deep understanding (not Wikipedia summaries) using intuition, analogy, diagrams, and step-by-step reasoning.
+Never write placeholder instructions. Never say a topic is "important". Never mention AI/PDFs/uploads.
 
 Return ONLY valid JSON:
 {
@@ -65,26 +63,36 @@ Return ONLY valid JSON:
   "topic_notes": [
     {
       "topic": "Topic Name",
-      "definition": "...",
-      "whyItMatters": ["..."],
-      "keyConcepts": ["..."],
-      "detailedExplanation": "...",
-      "diagram": "...",
-      "table": {"title": "...", "headers": ["Aspect", "A", "B"], "rows": [["...", "...", "..."]]},
-      "examples": ["..."],
-      "memoryTrick": "...",
-      "importantExamPoints": ["⭐⭐⭐ ..."],
-      "commonMistakes": ["..."],
-      "frequentlyAskedQuestions": [{"question": "...", "answer": "..."}],
+      "whatIsIt": "Simple first-year explanation (~200 words max)",
+      "whyNeeded": "Real problem this solves",
+      "realLifeAnalogy": "Memorable analogy",
+      "coreConcept": "Main idea in small parts",
+      "howItWorks": "Numbered working steps",
+      "architecture": "Overall structure",
+      "components": [{"name": "...", "purpose": "...", "responsibility": "...", "interaction": "...", "simpleExplanation": "..."}],
+      "diagram": "ASCII diagram",
+      "realWorldExample": "One practical walkthrough",
+      "deepDive": "University-depth internal working",
+      "advantages": ["Advantage — why"],
+      "disadvantages": ["Disadvantage — why"],
+      "comparison": {"title": "A vs B", "headers": ["Aspect", "A", "B"], "rows": [["...", "...", "..."]]},
+      "commonMistakes": ["Mistake — why + correct idea"],
       "vivaQuestions": [{"question": "...", "answer": "..."}],
-      "thirtySecondRevision": ["..."]
+      "examQuestions": {
+        "longAnswer": [{"question": "...", "answer": "..."}],
+        "shortAnswer": [{"question": "...", "answer": "..."}]
+      },
+      "mcqs": [{"question": "...", "options": ["A", "B", "C", "D"], "answer": "B", "explanation": "..."}],
+      "memoryTricks": ["Mnemonic"],
+      "revisionSheet": ["Max 15 short bullets"],
+      "keyTakeaways": ["⭐⭐⭐ Must Know — ...", "⭐⭐ Important — ...", "⭐ Good to Know — ..."]
     }
   ]
 }
 """
 
-NOTES_GENERATE_USER_PROMPT = """Generate concise exam-revision notes for these syllabus topics.
-ONE complete note object per topic. No filler. No placeholders.
+NOTES_GENERATE_USER_PROMPT = """Teach these syllabus topics as Professor Alex would.
+ONE complete lecture-note object per topic. No filler. No placeholders.
 
 Topics: {topics}
 Subject: {subject}
