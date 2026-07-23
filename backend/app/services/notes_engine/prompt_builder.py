@@ -88,13 +88,16 @@ JSON schema:
 
 QUALITY BAR:
 - whatIsIt ≤ ~200 words
+- Keep EVERY section concise — prefer dense bullets over long essays
+- Total JSON must fit in one response; do not pad with filler
 - revisionSheet ≤ 15 bullets
 - vivaQuestions: 4–6
-- examQuestions.longAnswer: 2–4; shortAnswer: 3–5
-- mcqs: 3–5
+- examQuestions.longAnswer: 2–3; shortAnswer: 3–4
+- mcqs: 3–4
 - keyTakeaways: include all three star ranks
 - Omit a key only when it truly does not apply
 - Never repeat the same idea across sections
+- Never copy schema instruction text into field values
 """
 
 EXAM_NOTES_USER_PROMPT = """Teach this topic as Professor Alex would in a university lecture.

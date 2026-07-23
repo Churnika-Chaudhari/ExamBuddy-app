@@ -79,9 +79,44 @@ _INSTRUCTION_PLACEHOLDER_LINE = re.compile(
 )
 
 
+# Prompt-schema echoes and raw JSON dumps that must never reach students.
+_SCHEMA_ECHO_MARKERS: tuple[str, ...] = (
+    "Simple explanation for a first-year student",
+    "Max ~200 words",
+    "Memorable analogy (traffic",
+    "Max 15 ultra-short bullets",
+    "Return ONLY valid JSON",
+    "Provide at least one concrete",
+    "Explain what **",
+    '"whatIsIt":',
+    '"whyNeeded":',
+    '"realLifeAnalogy":',
+    '"revisionSheet":',
+)
+
+
+def looks_like_raw_notes_json(notes: str) -> bool:
+    """True when the body is mostly a JSON blob instead of lecture markdown."""
+    text = (notes or "").strip()
+    if not text:
+        return False
+    if text.startswith("{") or text.startswith("["):
+        return True
+    # Common when truncated JSON is pasted into the notes field.
+    if text.count('"whatIsIt"') + text.count('"definition"') >= 1 and text.count("{") >= 2:
+        return True
+    return False
+
+
 def is_placeholder_notes(notes: str) -> bool:
     """True when notes look like prompt instructions instead of real study content."""
     if not notes or len(notes.strip()) < 80:
+        return True
+    if looks_like_raw_notes_json(notes):
+        return True
+    lowered = notes
+    marker_hits = sum(1 for marker in _SCHEMA_ECHO_MARKERS if marker in lowered)
+    if marker_hits >= 2:
         return True
     if "Provide at least one concrete" in notes or "Explain what **" in notes:
         return True

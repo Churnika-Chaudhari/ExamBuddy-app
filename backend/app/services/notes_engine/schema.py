@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-PROMPT_VERSION = "v18.0"
+PROMPT_VERSION = "v18.1"
 
 EXAM_NOTE_FIELDS = (
     "topic",

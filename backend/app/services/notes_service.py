@@ -95,14 +95,13 @@ class NotesService:
                 cached_meta = cached.get("ai_metadata") or {}
                 cached_version = cached_meta.get("prompt_version")
                 cached_notes = str(cached.get("notes") or "")
-                # Skip stale / failed / placeholder cache so Gemini can regenerate.
+                # Skip stale / failed / placeholder / local-fallback cache so Gemini can regenerate.
                 skip_cache = (
                     cached_version != PROMPT_VERSION
                     or is_placeholder_notes(cached_notes)
-                    or (
-                        cached_meta.get("provider") == "local"
-                        and bool(cached_meta.get("generation_error") or cached_meta.get("ai_error"))
-                    )
+                    or cached_meta.get("provider") == "local"
+                    or cached_meta.get("generation_mode") == "local_fallback"
+                    or cached_meta.get("notes_engine") in {None, "", "exam_v17"}
                 )
                 if not skip_cache:
                     logger.info("Returning cached notes for topic=%s", topic)

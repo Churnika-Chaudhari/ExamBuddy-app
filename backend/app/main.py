@@ -9,6 +9,8 @@ from app.core.middleware import setup_exception_handlers, setup_middleware
 from app.core.responses import success_response
 from app.db.indexes import create_indexes
 from app.db.mongodb import close_mongo_connection, connect_to_mongo, get_database
+from app.services.ai.provider_order import has_usable_api_key
+from app.services.notes_engine.schema import PROMPT_VERSION
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -54,12 +56,19 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["System"], summary="Health check")
     async def health_check():
+        cfg = get_settings()
         return success_response(
             {
                 "status": "healthy",
-                "app": settings.app_name,
-                "version": settings.app_version,
-                "environment": settings.environment,
+                "app": cfg.app_name,
+                "version": cfg.app_version,
+                "environment": cfg.environment,
+                "ai_provider": cfg.ai_provider,
+                "ai_configured": has_usable_api_key(cfg.gemini_api_key)
+                or has_usable_api_key(cfg.openai_api_key),
+                "gemini_configured": has_usable_api_key(cfg.gemini_api_key),
+                "openai_configured": has_usable_api_key(cfg.openai_api_key),
+                "prompt_version": PROMPT_VERSION,
             }
         )
 
