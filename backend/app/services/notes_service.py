@@ -101,7 +101,8 @@ class NotesService:
                     or is_placeholder_notes(cached_notes)
                     or cached_meta.get("provider") == "local"
                     or cached_meta.get("generation_mode") == "local_fallback"
-                    or cached_meta.get("notes_engine") in {None, "", "exam_v17"}
+                    or cached_meta.get("notes_engine")
+                    in {None, "", "exam_v17", "professor_alex_v18"}
                 )
                 if not skip_cache:
                     logger.info("Returning cached notes for topic=%s", topic)

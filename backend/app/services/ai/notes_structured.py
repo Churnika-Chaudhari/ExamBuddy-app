@@ -97,6 +97,13 @@ def is_structured_notes_result(data: dict[str, Any]) -> bool:
         "keyTakeaways",
         "memoryTricks",
         "mcqs",
+        "twoMarkAnswer",
+        "fiveMarkAnswer",
+        "tenMarkAnswer",
+        "revisionSummary",
+        "topicType",
+        "applications",
+        "keywords",
     )
     return any(data.get(key) for key in markers)
 

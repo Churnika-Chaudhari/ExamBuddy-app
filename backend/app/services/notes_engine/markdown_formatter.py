@@ -1,4 +1,4 @@
-"""Markdown formatter for Professor Alex lecture notes (v18)."""
+"""Markdown formatter for ExamBuddy exam notes (v19)."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def _as_text(value: Any) -> str:
         parts = [_as_text(item) for item in value]
         return "\n".join(p for p in parts if p)
     if isinstance(value, dict):
-        for key in ("text", "description", "content", "value", "simpleExplanation"):
+        for key in ("text", "description", "content", "value", "answer"):
             if value.get(key):
                 return str(value[key]).strip()
     return str(value).strip()
@@ -76,7 +76,6 @@ def _as_bullets(value: Any) -> list[str]:
 def _qa_pairs(value: Any) -> list[tuple[str, str]]:
     pairs: list[tuple[str, str]] = []
     if isinstance(value, dict):
-        # examQuestions may be { longAnswer: [], shortAnswer: [] }
         for key in ("longAnswer", "shortAnswer", "long_answer", "short_answer", "items"):
             if key in value:
                 pairs.extend(_qa_pairs(value.get(key)))
@@ -131,256 +130,137 @@ def _append_qa(lines: list[str], title: str, content: Any) -> None:
         lines.append("")
 
 
-def _append_exam_questions(lines: list[str], value: Any) -> None:
-    if not value:
+def _append_diagram(lines: list[str], value: Any) -> None:
+    text = _as_text(value)
+    if not text:
         return
-    if isinstance(value, dict) and (
-        value.get("longAnswer")
-        or value.get("shortAnswer")
-        or value.get("long_answer")
-        or value.get("short_answer")
-    ):
-        lines.append("## University Exam Questions")
-        long_q = value.get("longAnswer") or value.get("long_answer")
-        short_q = value.get("shortAnswer") or value.get("short_answer")
-        if long_q:
-            lines.append("### Long Answer")
-            for idx, (q, a) in enumerate(_qa_pairs(long_q), start=1):
-                lines.append(f"#### LA{idx}. {q}")
-                if a:
-                    lines.append(f"**Answer:** {a}")
-                lines.append("")
-        if short_q:
-            lines.append("### Short Answer")
-            for idx, (q, a) in enumerate(_qa_pairs(short_q), start=1):
-                lines.append(f"#### SA{idx}. {q}")
-                if a:
-                    lines.append(f"**Answer:** {a}")
-                lines.append("")
+    lines.append("## Diagram")
+    # Mermaid: wrap if not already fenced
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines.extend([stripped, ""])
         return
-    _append_qa(lines, "University Exam Questions", value)
-
-
-def _append_mcqs(lines: list[str], value: Any) -> None:
-    if not isinstance(value, list) or not value:
+    lower = stripped.lower()
+    if lower.startswith(("flowchart", "sequenceDiagram", "graph ", "classDiagram", "erDiagram", "stateDiagram")):
+        lines.extend(["```mermaid", stripped, "```", ""])
         return
-    lines.append("## MCQs")
-    for idx, item in enumerate(value, start=1):
-        if not isinstance(item, dict):
-            continue
-        q = _as_text(item.get("question"))
-        if not q:
-            continue
-        lines.append(f"### MCQ{idx}. {q}")
-        options = item.get("options") or []
-        if isinstance(options, list):
-            for opt_i, opt in enumerate(options):
-                label = chr(65 + opt_i) if opt_i < 26 else str(opt_i + 1)
-                lines.append(f"- **{label}.** {_as_text(opt)}")
-        ans = _as_text(item.get("answer") or item.get("correct"))
-        if ans:
-            lines.append(f"**Answer:** {ans}")
-        expl = _as_text(item.get("explanation"))
-        if expl:
-            lines.append(f"**Why:** {expl}")
-        lines.append("")
-
-
-def _append_components(lines: list[str], value: Any, *, title: str = "Architecture / Components") -> None:
-    if not value:
-        return
-    if isinstance(value, list) and value and isinstance(value[0], dict) and (
-        value[0].get("purpose") or value[0].get("responsibility") or value[0].get("name")
-    ):
-        lines.append(f"## {title}")
-        for item in value:
-            if not isinstance(item, dict):
-                continue
-            name = _as_text(item.get("name") or item.get("title") or "Component")
-            lines.append(f"### {name}")
-            purpose = _as_text(item.get("purpose"))
-            responsibility = _as_text(item.get("responsibility"))
-            interaction = _as_text(item.get("interaction"))
-            simple = _as_text(item.get("simpleExplanation") or item.get("description"))
-            if purpose:
-                lines.append(f"- **Purpose:** {purpose}")
-            if responsibility:
-                lines.append(f"- **Responsibility:** {responsibility}")
-            if interaction:
-                lines.append(f"- **Interaction:** {interaction}")
-            if simple:
-                lines.append(f"- **Simple explanation:** {simple}")
-            lines.append("")
-        return
-    _append_bullets(lines, title, value)
+    lines.extend(["```", stripped, "```", ""])
 
 
 def _append_table(lines: list[str], table: Any) -> None:
     if not table:
         return
-
-    if isinstance(table, dict) and (table.get("compareWith") or table.get("left")):
-        left = _as_text(table.get("left") or "A")
-        right = _as_text(table.get("compareWith") or table.get("right") or "B")
-        rows = table.get("table") or table.get("rows") or []
-        lines.append(f"## Comparison: {left} vs {right}")
-        lines.append(f"| Aspect | {left} | {right} |")
-        lines.append("|---|---|---|")
-        for row in rows:
-            if isinstance(row, dict):
-                aspect = _as_text(row.get("aspect") or row.get("feature") or row.get("point"))
-                lv = _as_text(row.get("leftValue") or row.get("left") or row.get("a"))
-                rv = _as_text(row.get("rightValue") or row.get("right") or row.get("b"))
-                if aspect:
-                    lines.append(f"| {aspect} | {lv} | {rv} |")
-            elif isinstance(row, (list, tuple)) and len(row) >= 3:
-                lines.append(f"| {_as_text(row[0])} | {_as_text(row[1])} | {_as_text(row[2])} |")
-        lines.append("")
-        return
-
     if isinstance(table, str):
         text = table.strip()
         if text:
             lines.extend(["## Comparison", text, ""])
         return
-
     if not isinstance(table, dict):
         return
 
     title = _as_text(table.get("title") or "Comparison")
     headers = table.get("headers") or ["Aspect", "A", "B"]
-    rows = table.get("rows") or []
-    if not isinstance(headers, list) or not headers:
-        return
-    header_cells = [_as_text(h) for h in headers]
-    lines.append(f"## Comparison: {title}" if title != "Comparison" else "## Comparison")
-    lines.append("| " + " | ".join(header_cells) + " |")
-    lines.append("|" + "|".join(["---"] * len(header_cells)) + "|")
-    for row in rows:
-        if isinstance(row, dict):
-            cells = [_as_text(row.get(h, "")) for h in headers]
-        elif isinstance(row, (list, tuple)):
-            cells = [_as_text(c) for c in row[: len(header_cells)]]
-            while len(cells) < len(header_cells):
-                cells.append("")
-        else:
-            continue
-        lines.append("| " + " | ".join(cells) + " |")
-    lines.append("")
+    rows = table.get("rows") or table.get("table") or []
+    if isinstance(headers, list) and headers:
+        header_cells = [_as_text(h) for h in headers]
+        lines.append(f"## Comparison: {title}" if title else "## Comparison")
+        lines.append("| " + " | ".join(header_cells) + " |")
+        lines.append("|" + "|".join(["---"] * len(header_cells)) + "|")
+        for row in rows:
+            if isinstance(row, dict):
+                cells = [_as_text(row.get(h, "")) for h in headers]
+            elif isinstance(row, (list, tuple)):
+                cells = [_as_text(c) for c in row[: len(header_cells)]]
+                while len(cells) < len(header_cells):
+                    cells.append("")
+            else:
+                continue
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
 
 
 def format_exam_notes_markdown(data: dict[str, Any]) -> str:
-    """Render Professor Alex lecture JSON into markdown."""
+    """Render ExamBuddy exam-note JSON into markdown."""
     topic = _as_text(data.get("topic") or data.get("title") or "Study Topic")
     lines: list[str] = [f"# {topic}", ""]
 
-    _append_section(lines, "1. What is it?", _resolve(data, "whatIsIt"))
-    _append_section(lines, "2. Why do we need it?", _resolve(data, "whyNeeded"))
-    _append_section(lines, "3. Real Life Analogy", _resolve(data, "realLifeAnalogy"))
-    _append_section(lines, "4. Core Concept", _resolve(data, "coreConcept"))
-    _append_section(lines, "5. How It Works", _resolve(data, "howItWorks"))
+    topic_type = _as_text(_resolve(data, "topicType"))
+    if topic_type:
+        lines.extend([f"**Type:** {topic_type}", ""])
 
-    architecture = _as_text(_resolve(data, "architecture"))
-    components = _resolve(data, "components")
-    if architecture:
-        lines.append("## 6. Architecture / Components")
-        lines.append(architecture)
-        lines.append("")
-        if isinstance(components, list) and components and isinstance(components[0], dict):
-            for item in components:
-                if not isinstance(item, dict):
-                    continue
-                name = _as_text(item.get("name") or item.get("title") or "Component")
-                lines.append(f"### {name}")
-                purpose = _as_text(item.get("purpose"))
-                responsibility = _as_text(item.get("responsibility"))
-                interaction = _as_text(item.get("interaction"))
-                simple = _as_text(item.get("simpleExplanation") or item.get("description"))
-                if purpose:
-                    lines.append(f"- **Purpose:** {purpose}")
-                if responsibility:
-                    lines.append(f"- **Responsibility:** {responsibility}")
-                if interaction:
-                    lines.append(f"- **Interaction:** {interaction}")
-                if simple:
-                    lines.append(f"- **Simple explanation:** {simple}")
-                lines.append("")
-        elif components:
-            for bullet in _as_bullets(components):
-                lines.append(f"- {bullet}")
-            lines.append("")
-    else:
-        _append_components(lines, components, title="6. Architecture / Components")
-
-    _append_section(lines, "7. Visual Diagram", data.get("diagram"))
-    _append_section(lines, "8. Real World Example", _resolve(data, "realWorldExample"))
-    _append_section(lines, "9. Deep Dive", _resolve(data, "deepDive"))
-    _append_bullets(lines, "10. Advantages", _resolve(data, "advantages"))
-    _append_bullets(lines, "11. Disadvantages", _resolve(data, "disadvantages"))
-
-    comparison = _resolve(data, "comparison")
-    if comparison:
-        # Ensure heading numbering in table helper by post-fixing title if needed
-        start = len(lines)
-        _append_table(lines, comparison)
-        for i in range(start, len(lines)):
-            if lines[i].startswith("## Comparison"):
-                lines[i] = lines[i].replace("## Comparison", "## 12. Comparison", 1)
-                break
-
-    _append_bullets(lines, "13. Common Mistakes", _resolve(data, "commonMistakes"))
-    _append_qa(lines, "14. Interview / Viva Questions", _resolve(data, "vivaQuestions"))
-    _append_exam_questions(lines, _resolve(data, "examQuestions"))
-    # Fix exam questions heading number if helper used generic title
-    for i, line in enumerate(lines):
-        if line == "## University Exam Questions":
-            lines[i] = "## 15. University Exam Questions"
-            break
-    _append_mcqs(lines, _resolve(data, "mcqs"))
-    for i, line in enumerate(lines):
-        if line == "## MCQs":
-            lines[i] = "## 15. University Exam Questions — MCQs"
-            break
-    _append_bullets(lines, "16. Memory Tricks", _resolve(data, "memoryTricks"))
-    _append_bullets(lines, "17. Revision Sheet", _resolve(data, "revisionSheet"), limit=15)
-    _append_bullets(lines, "18. Key Takeaways", _resolve(data, "keyTakeaways"))
+    _append_section(lines, "Definition", _resolve(data, "definition"))
+    _append_section(lines, "Introduction", _resolve(data, "introduction"))
+    _append_section(lines, "Detailed Explanation", _resolve(data, "detailedExplanation"))
+    _append_bullets(lines, "Key Concepts", _resolve(data, "keyConcepts"))
+    _append_bullets(lines, "Characteristics", _resolve(data, "characteristics"))
+    _append_section(lines, "Architecture", _resolve(data, "architecture"))
+    _append_section(lines, "Working", _resolve(data, "working"))
+    _append_section(lines, "Syntax", _resolve(data, "syntax"))
+    _append_section(lines, "Pseudocode", _resolve(data, "pseudocode"))
+    _append_section(lines, "Code Example", _resolve(data, "codeExample"))
+    _append_section(lines, "Output", _resolve(data, "output"))
+    _append_diagram(lines, _resolve(data, "diagram"))
+    _append_section(lines, "Example", _resolve(data, "example"))
+    _append_section(lines, "Time Complexity", _resolve(data, "timeComplexity"))
+    _append_section(lines, "Space Complexity", _resolve(data, "spaceComplexity"))
+    _append_bullets(lines, "Advantages", _resolve(data, "advantages"))
+    _append_bullets(lines, "Disadvantages", _resolve(data, "disadvantages"))
+    _append_bullets(lines, "Applications", _resolve(data, "applications"))
+    _append_bullets(lines, "Important Formulae", _resolve(data, "formulae"))
+    _append_table(lines, _resolve(data, "comparison"))
+    _append_qa(lines, "Frequently Asked University Questions", _resolve(data, "frequentlyAskedQuestions"))
+    _append_section(lines, "2-Mark Answer", _resolve(data, "twoMarkAnswer"))
+    _append_section(lines, "5-Mark Answer", _resolve(data, "fiveMarkAnswer"))
+    _append_section(lines, "10-Mark Answer", _resolve(data, "tenMarkAnswer"))
+    _append_qa(lines, "Viva Questions", _resolve(data, "vivaQuestions"))
+    _append_qa(lines, "Interview Questions", _resolve(data, "interviewQuestions"))
+    _append_bullets(lines, "Common Mistakes", _resolve(data, "commonMistakes"))
+    _append_bullets(lines, "Revision Summary", _resolve(data, "revisionSummary"), limit=12)
+    _append_bullets(lines, "Keywords", _resolve(data, "keywords"))
 
     return sanitize_note_text("\n".join(lines).strip())
 
 
 def extract_exam_payload(data: dict[str, Any]) -> dict[str, Any]:
-    """Keep canonical lecture-note fields for storage."""
+    """Keep canonical exam-note fields for storage."""
     payload: dict[str, Any] = {}
     if data.get("topic"):
         payload["topic"] = data["topic"]
     for canonical in (
-        "whatIsIt",
-        "whyNeeded",
-        "realLifeAnalogy",
-        "coreConcept",
-        "howItWorks",
-        "architecture",
-        "components",
+        "topicType",
+        "definition",
+        "introduction",
+        "detailedExplanation",
+        "keyConcepts",
+        "working",
         "diagram",
-        "realWorldExample",
-        "deepDive",
+        "example",
         "advantages",
         "disadvantages",
-        "comparison",
-        "commonMistakes",
+        "applications",
+        "formulae",
+        "frequentlyAskedQuestions",
+        "twoMarkAnswer",
+        "fiveMarkAnswer",
+        "tenMarkAnswer",
         "vivaQuestions",
-        "examQuestions",
-        "mcqs",
-        "memoryTricks",
-        "revisionSheet",
-        "keyTakeaways",
+        "interviewQuestions",
+        "commonMistakes",
+        "revisionSummary",
+        "keywords",
+        "characteristics",
+        "architecture",
+        "syntax",
+        "codeExample",
+        "output",
+        "pseudocode",
+        "timeComplexity",
+        "spaceComplexity",
+        "comparison",
     ):
         value = _resolve(data, canonical)
         if value is not None:
             payload[canonical] = value
-    # Preserve plain definition alias for older clients reading structured_notes
-    if payload.get("whatIsIt") and not data.get("definition"):
-        payload["definition"] = payload["whatIsIt"]
     return payload
 
 
@@ -388,18 +268,22 @@ def is_exam_notes_result(data: dict[str, Any]) -> bool:
     if not data:
         return False
     markers = (
-        "whatIsIt",
-        "whyNeeded",
-        "realLifeAnalogy",
-        "coreConcept",
-        "howItWorks",
-        "keyTakeaways",
-        "revisionSheet",
         "definition",
-        "whyItMatters",
+        "whatIsIt",
+        "introduction",
+        "detailedExplanation",
+        "deepDive",
+        "keyConcepts",
+        "working",
+        "howItWorks",
+        "twoMarkAnswer",
+        "fiveMarkAnswer",
+        "tenMarkAnswer",
+        "revisionSummary",
+        "revisionSheet",
+        "frequentlyAskedQuestions",
+        "vivaQuestions",
         "importantExamPoints",
         "thirtySecondRevision",
-        "detailedExplanation",
-        "examQuestions",
     )
     return any(data.get(key) for key in markers)

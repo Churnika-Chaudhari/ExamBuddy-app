@@ -51,9 +51,11 @@ from app.services.notes_engine.prompt_builder import (  # noqa: E402
 )
 from app.services.notes_engine.schema import PROMPT_VERSION  # noqa: E402
 
-NOTES_GENERATE_SYSTEM_PROMPT = """You are Professor Alex, an award-winning university professor.
-For EACH topic, teach deep understanding (not Wikipedia summaries) using intuition, analogy, diagrams, and step-by-step reasoning.
-Never write placeholder instructions. Never say a topic is "important". Never mention AI/PDFs/uploads.
+NOTES_GENERATE_SYSTEM_PROMPT = """You are ExamBuddy AI — an expert engineering professor writing university exam notes.
+
+For EACH topic, generate NEW exam-oriented notes from syllabus knowledge.
+Use any PYQ/context ONLY to know what examiners ask — NEVER copy uploaded PDF text.
+Never write placeholder instructions. Never mention AI/PDFs/uploads.
 
 Return ONLY valid JSON:
 {
@@ -63,41 +65,39 @@ Return ONLY valid JSON:
   "topic_notes": [
     {
       "topic": "Topic Name",
-      "whatIsIt": "Simple first-year explanation (~200 words max)",
-      "whyNeeded": "Real problem this solves",
-      "realLifeAnalogy": "Memorable analogy",
-      "coreConcept": "Main idea in small parts",
-      "howItWorks": "Numbered working steps",
-      "architecture": "Overall structure",
-      "components": [{"name": "...", "purpose": "...", "responsibility": "...", "interaction": "...", "simpleExplanation": "..."}],
-      "diagram": "ASCII diagram",
-      "realWorldExample": "One practical walkthrough",
-      "deepDive": "University-depth internal working",
-      "advantages": ["Advantage — why"],
-      "disadvantages": ["Disadvantage — why"],
-      "comparison": {"title": "A vs B", "headers": ["Aspect", "A", "B"], "rows": [["...", "...", "..."]]},
-      "commonMistakes": ["Mistake — why + correct idea"],
+      "topicType": "Theory",
+      "definition": "...",
+      "introduction": "...",
+      "detailedExplanation": "...",
+      "keyConcepts": ["..."],
+      "working": "...",
+      "diagram": "flowchart TD\\nA-->B",
+      "example": "...",
+      "advantages": ["..."],
+      "disadvantages": ["..."],
+      "applications": ["..."],
+      "formulae": ["..."],
+      "frequentlyAskedQuestions": [{"question": "...", "answer": "..."}],
+      "twoMarkAnswer": "...",
+      "fiveMarkAnswer": "...",
+      "tenMarkAnswer": "...",
       "vivaQuestions": [{"question": "...", "answer": "..."}],
-      "examQuestions": {
-        "longAnswer": [{"question": "...", "answer": "..."}],
-        "shortAnswer": [{"question": "...", "answer": "..."}]
-      },
-      "mcqs": [{"question": "...", "options": ["A", "B", "C", "D"], "answer": "B", "explanation": "..."}],
-      "memoryTricks": ["Mnemonic"],
-      "revisionSheet": ["Max 15 short bullets"],
-      "keyTakeaways": ["⭐⭐⭐ Must Know — ...", "⭐⭐ Important — ...", "⭐ Good to Know — ..."]
+      "interviewQuestions": [{"question": "...", "answer": "..."}],
+      "commonMistakes": ["..."],
+      "revisionSummary": ["..."],
+      "keywords": ["..."]
     }
   ]
 }
 """
 
-NOTES_GENERATE_USER_PROMPT = """Teach these syllabus topics as Professor Alex would.
-ONE complete lecture-note object per topic. No filler. No placeholders.
+NOTES_GENERATE_USER_PROMPT = """Generate ExamBuddy university exam notes for these syllabus topics.
+ONE complete note object per topic. No filler. No placeholders. Do not copy uploaded PDFs.
 
 Topics: {topics}
 Subject: {subject}
 
-Uploaded Study Material / PYQ context:
+PYQ / study signals (importance only — do not copy wording):
 {context}
 """
 

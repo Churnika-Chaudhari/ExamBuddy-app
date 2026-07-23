@@ -296,29 +296,38 @@ class GeminiProvider(BaseAIProvider):
         because the model hit the output-token cap mid-document.
         """
         structured_fields = (
-            # Professor Alex v18
+            # ExamBuddy v19
             "topic",
+            "topicType",
+            "definition",
+            "introduction",
+            "detailedExplanation",
+            "working",
+            "diagram",
+            "example",
+            "architecture",
+            "syntax",
+            "codeExample",
+            "output",
+            "pseudocode",
+            "timeComplexity",
+            "spaceComplexity",
+            "twoMarkAnswer",
+            "fiveMarkAnswer",
+            "tenMarkAnswer",
+            # Legacy / Professor Alex
             "whatIsIt",
             "whyNeeded",
             "realLifeAnalogy",
             "coreConcept",
             "howItWorks",
-            "architecture",
-            "diagram",
             "realWorldExample",
             "deepDive",
-            # Legacy v17 and earlier
-            "definition",
-            "introduction",
             "whyUsed",
             "whyItMatters",
-            "detailedExplanation",
-            "working",
             "workingPrinciple",
             "stepByStep",
-            "example",
             "formula",
-            "syntax",
             "algorithm",
             "flow",
             "summary",
@@ -331,9 +340,15 @@ class GeminiProvider(BaseAIProvider):
                 salvaged[field] = value
 
         for array_field in (
+            "keyConcepts",
             "advantages",
             "disadvantages",
+            "applications",
             "commonMistakes",
+            "revisionSummary",
+            "keywords",
+            "formulae",
+            "characteristics",
             "memoryTricks",
             "revisionSheet",
             "keyTakeaways",
@@ -345,11 +360,13 @@ class GeminiProvider(BaseAIProvider):
                 salvaged[array_field] = values
 
         if (
-            salvaged.get("whatIsIt")
-            or salvaged.get("definition")
+            salvaged.get("definition")
+            or salvaged.get("whatIsIt")
             or salvaged.get("detailedExplanation")
             or salvaged.get("deepDive")
+            or salvaged.get("working")
             or salvaged.get("howItWorks")
+            or salvaged.get("twoMarkAnswer")
         ):
             return salvaged
 

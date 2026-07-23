@@ -1,4 +1,4 @@
-"""Quality validation and deduplication for Professor Alex lecture notes."""
+"""Quality validation and deduplication for ExamBuddy exam notes."""
 
 from __future__ import annotations
 
@@ -38,22 +38,24 @@ def _dedupe_bullets(items: list[str], *, seen: set[str] | None = None) -> list[s
 
 
 def deduplicate_structured_notes(data: dict[str, Any]) -> dict[str, Any]:
-    """Remove repeated bullets across sections; keep lecture sections dense."""
+    """Remove repeated bullets across sections."""
     result = dict(data)
     global_seen: set[str] = set()
 
     bullet_keys = (
-        "whyNeeded",
-        "whyItMatters",
+        "keyConcepts",
         "advantages",
         "disadvantages",
+        "applications",
         "commonMistakes",
-        "memoryTricks",
-        "keyTakeaways",
-        "importantExamPoints",
+        "revisionSummary",
         "revisionSheet",
         "thirtySecondRevision",
-        "examples",
+        "keyTakeaways",
+        "importantExamPoints",
+        "characteristics",
+        "keywords",
+        "formulae",
     )
     for key in bullet_keys:
         bullets = _as_bullets(result.get(key))
@@ -70,15 +72,15 @@ def deduplicate_structured_notes(data: dict[str, Any]) -> dict[str, Any]:
                 continue
             final.append(bullet)
             global_seen.add(key_n)
-        if key in ("whyNeeded", "whyItMatters"):
-            final = final[:6]
-        if key in ("revisionSheet", "thirtySecondRevision"):
-            final = final[:15]
-        if key in ("keyTakeaways", "importantExamPoints"):
+        if key in ("revisionSummary", "revisionSheet", "thirtySecondRevision"):
             final = final[:12]
         result[key] = final
 
-    for key in ("vivaQuestions", "frequentlyAskedQuestions", "interviewQuestions"):
+    for key in (
+        "vivaQuestions",
+        "interviewQuestions",
+        "frequentlyAskedQuestions",
+    ):
         pairs = _qa_pairs(result.get(key))
         uniq: list[dict[str, str]] = []
         qseen: set[str] = set()
@@ -91,48 +93,15 @@ def deduplicate_structured_notes(data: dict[str, Any]) -> dict[str, Any]:
         if uniq:
             result[key] = uniq
 
-    # Deduplicate nested examQuestions
-    exam_q = result.get("examQuestions")
-    if isinstance(exam_q, dict):
-        cleaned_exam: dict[str, Any] = {}
-        for nest_key in ("longAnswer", "shortAnswer", "long_answer", "short_answer"):
-            pairs = _qa_pairs(exam_q.get(nest_key))
-            if not pairs:
-                continue
-            uniq: list[dict[str, str]] = []
-            qseen: set[str] = set()
-            for q, a in pairs:
-                qn = _norm(q)
-                if not qn or qn in qseen:
-                    continue
-                qseen.add(qn)
-                uniq.append({"question": q, "answer": a})
-            if uniq:
-                cleaned_exam[nest_key] = uniq
-        if cleaned_exam:
-            result["examQuestions"] = {**exam_q, **cleaned_exam}
-    elif isinstance(exam_q, list):
-        pairs = _qa_pairs(exam_q)
-        uniq = []
-        qseen = set()
-        for q, a in pairs:
-            qn = _norm(q)
-            if not qn or qn in qseen:
-                continue
-            qseen.add(qn)
-            uniq.append({"question": q, "answer": a})
-        if uniq:
-            result["examQuestions"] = uniq
-
-    what = _as_text(_resolve(result, "whatIsIt") or result.get("definition"))
-    deep = _as_text(result.get("deepDive") or result.get("detailedExplanation"))
-    if what and deep and _norm(what) in _norm(deep):
-        lines = [ln for ln in deep.splitlines() if _norm(ln) != _norm(what)]
+    definition = _as_text(_resolve(result, "definition"))
+    detailed = _as_text(_resolve(result, "detailedExplanation"))
+    if definition and detailed and _norm(definition) in _norm(detailed):
+        lines = [ln for ln in detailed.splitlines() if _norm(ln) != _norm(definition)]
         cleaned = "\n".join(lines).strip()
-        if result.get("deepDive") is not None:
-            result["deepDive"] = cleaned
-        elif result.get("detailedExplanation") is not None:
+        if result.get("detailedExplanation") is not None:
             result["detailedExplanation"] = cleaned
+        elif result.get("deepDive") is not None:
+            result["deepDive"] = cleaned
 
     return result
 
@@ -142,61 +111,50 @@ class NotesValidationError(ValueError):
 
 
 def validate_exam_notes(data: dict[str, Any], *, markdown: str) -> None:
-    """Fail fast on empty / placeholder / too-thin lecture notes."""
+    """Fail fast on empty / placeholder / too-thin exam notes."""
     if not markdown or len(markdown.strip()) < 120:
         raise NotesValidationError("Notes markdown too short")
     if is_placeholder_notes(markdown):
         raise NotesValidationError("Notes contain instruction placeholders")
 
-    what = _as_text(data.get("whatIsIt") or data.get("definition"))
-    has_what = bool(what) or "## 1. What is it?" in markdown or "## Definition" in markdown
-    if not has_what:
-        raise NotesValidationError("Missing What is it? / definition section")
+    definition = _as_text(data.get("definition") or data.get("whatIsIt"))
+    has_definition = bool(definition) or "## Definition" in markdown or "## 1. What is it?" in markdown
+    if not has_definition:
+        raise NotesValidationError("Missing definition section")
 
     has_revision = any(
         [
+            _as_bullets(data.get("revisionSummary")),
             _as_bullets(data.get("revisionSheet")),
-            _as_bullets(data.get("keyTakeaways")),
+            _as_bullets(data.get("keywords")),
+            _as_text(data.get("twoMarkAnswer")),
             _as_bullets(data.get("thirtySecondRevision")),
-            _as_bullets(data.get("importantExamPoints")),
-            "## 17. Revision Sheet" in markdown,
-            "## 18. Key Takeaways" in markdown,
-            "## Important Exam Points" in markdown,
-            "## 30 Second Revision" in markdown,
+            "## Revision Summary" in markdown,
+            "## 2-Mark Answer" in markdown,
+            "## Keywords" in markdown,
         ]
     )
     if not has_revision:
-        raise NotesValidationError("Missing revision / key takeaway sections")
+        raise NotesValidationError("Missing revision / mark-wise answer sections")
 
 
 def score_notes_quality(data: dict[str, Any], markdown: str) -> dict[str, Any]:
     """Lightweight quality metrics for logging/metadata."""
-    exam_q = data.get("examQuestions")
-    faq_count = 0
-    if isinstance(exam_q, dict):
-        faq_count = len(_qa_pairs(exam_q.get("longAnswer") or exam_q.get("long_answer"))) + len(
-            _qa_pairs(exam_q.get("shortAnswer") or exam_q.get("short_answer"))
-        )
-    else:
-        faq_count = len(_qa_pairs(exam_q or data.get("frequentlyAskedQuestions")))
-
     return {
         "chars": len(markdown or ""),
-        "has_what_is_it": bool(_as_text(data.get("whatIsIt") or data.get("definition"))),
-        "has_analogy": bool(_as_text(data.get("realLifeAnalogy") or data.get("analogy"))),
+        "has_definition": bool(_as_text(data.get("definition") or data.get("whatIsIt"))),
         "has_diagram": bool(_as_text(data.get("diagram"))),
-        "takeaway_count": len(
-            _as_bullets(data.get("keyTakeaways") or data.get("importantExamPoints") or data.get("keyPoints"))
+        "has_mark_answers": bool(
+            _as_text(data.get("twoMarkAnswer"))
+            or _as_text(data.get("fiveMarkAnswer"))
+            or _as_text(data.get("tenMarkAnswer"))
         ),
-        "faq_count": faq_count,
-        "viva_count": len(_qa_pairs(data.get("vivaQuestions") or data.get("interviewQuestions"))),
-        "mcq_count": len(data.get("mcqs") or []) if isinstance(data.get("mcqs"), list) else 0,
+        "faq_count": len(_qa_pairs(data.get("frequentlyAskedQuestions") or data.get("examQuestions"))),
+        "viva_count": len(_qa_pairs(data.get("vivaQuestions"))),
+        "interview_count": len(_qa_pairs(data.get("interviewQuestions"))),
         "has_table": bool(data.get("comparison") or data.get("table")),
-        "has_memory_trick": bool(
-            _as_bullets(data.get("memoryTricks"))
-            or _as_text(data.get("memoryTrick") or data.get("mnemonic"))
-        ),
         "revision_bullets": len(
-            _as_bullets(data.get("revisionSheet") or data.get("thirtySecondRevision") or data.get("summary"))
+            _as_bullets(data.get("revisionSummary") or data.get("revisionSheet") or data.get("summary"))
         ),
+        "topic_type": _as_text(data.get("topicType") or data.get("category")),
     }

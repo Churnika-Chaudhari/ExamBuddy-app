@@ -92,6 +92,10 @@ _SCHEMA_ECHO_MARKERS: tuple[str, ...] = (
     '"whyNeeded":',
     '"realLifeAnalogy":',
     '"revisionSheet":',
+    '"twoMarkAnswer":',
+    '"revisionSummary":',
+    "Precise exam-ready definition",
+    "INTERNAL ONLY",
 )
 
 
