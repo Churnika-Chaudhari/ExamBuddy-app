@@ -44,8 +44,8 @@ class NotesPipeline:
         if result:
             return result
 
-        # Deferred import breaks cycle: topic_analysis → pipeline.text_preprocessor
-        from app.utils.topic_analysis import build_consolidated_analysis
+        # Deferred import breaks cycle: topic_consolidation → text_preprocessor
+        from app.services.pipeline.topic_consolidation import build_consolidated_analysis
 
         return build_consolidated_analysis(
             cleaned_text,

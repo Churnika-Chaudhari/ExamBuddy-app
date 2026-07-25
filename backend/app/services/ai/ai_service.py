@@ -272,7 +272,7 @@ class AIService:
                 logger.error("PYQ analysis AI failed, falling back to local: %s", exc)
 
         from app.services.pipeline.notes_pipeline import NotesPipeline
-        from app.utils.topic_analysis import build_consolidated_analysis
+        from app.services.pipeline.topic_consolidation import build_consolidated_analysis
 
         pipeline = NotesPipeline()
         if local_topics and local_topics.get("topic_table"):

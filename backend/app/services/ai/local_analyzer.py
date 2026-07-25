@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from app.utils.topic_analysis import build_consolidated_analysis
+from app.services.pipeline.topic_consolidation import build_consolidated_analysis
 
 logger = logging.getLogger(__name__)
 
