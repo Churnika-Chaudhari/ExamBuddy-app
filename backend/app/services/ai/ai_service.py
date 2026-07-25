@@ -12,7 +12,7 @@ from app.services.ai.base_provider import (
 )
 from app.services.ai.provider_order import resolve_provider_order
 from app.services.ai.local_analyzer import analyze_pyq_local
-from app.services.ai.notes_sanitizer import is_placeholder_notes, sanitize_note_text
+from app.services.ai.notes_sanitizer import sanitize_note_text
 from app.services.llm_service import LLMService, should_skip_pyq_llm
 from app.utils.topic_extractor import sanitize_analysis_result
 from app.services.ai.notes_structured import (
@@ -22,6 +22,13 @@ from app.services.ai.notes_structured import (
 )
 from app.services.notes_engine.pipeline import ExamNotesPipeline
 from app.services.notes_engine.markdown_formatter import format_exam_notes_markdown
+from app.services.notes_engine.validator import NotesSchemaError
+from app.services.pipeline.three_stage import (
+    run_stage3_notes,
+    run_stage4_quiz,
+    build_stage4_quiz_inputs,
+    stage3_generate_json_factory,
+)
 from app.services.ai.prompts import (
     NOTES_GENERATE_SYSTEM_PROMPT,
     NOTES_GENERATE_USER_PROMPT,
@@ -30,8 +37,6 @@ from app.services.ai.prompts import (
     PROMPT_VERSION,
     PYQ_ANALYSIS_SYSTEM_PROMPT,
     PYQ_ANALYSIS_USER_PROMPT,
-    QUIZ_GENERATE_SYSTEM_PROMPT,
-    QUIZ_GENERATE_USER_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -212,6 +217,12 @@ class AIService:
         num_documents: int = 1,
         local_topics: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """
+        LEGACY: Full PYQ analysis via a single LLM prompt.
+
+        Production analysis uses Stage 1+2 via run_topic_pipeline in AnalysisService.
+        Kept for scripts/tests and backward compatibility only.
+        """
         if not content.strip():
             raise ExternalServiceError("No text content to analyze")
 
@@ -409,7 +420,7 @@ class AIService:
             "prompt_version": PROMPT_VERSION,
             "rag_chunk_count": 1 if material else 0,
             "generation_mode": "local_fallback",
-            "notes_engine": "exambuddy_exam_v19",
+            "notes_engine": "exambuddy_stage3_v20",
         }
         return {
             "notes": notes,
@@ -484,66 +495,53 @@ class AIService:
         self,
         topic: str,
         *,
+        subject: str | None = None,
+        exam_priority: str = "",
+        # Legacy kwargs — ignored by Stage 3 (isolation preserved for BC).
         rag_context: str = "",
         analysis_context: str = "",
-        subject: str | None = None,
         rag_sources: list[dict[str, Any]] | None = None,
         pipeline_context: str = "",
-        exam_priority: str = "",
         pyq_questions: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        _ = (rag_context, analysis_context, pipeline_context, pyq_questions)
         if not self.ai_available:
             logger.warning("Notes local fallback — no AI provider configured for topic=%s", topic)
-            result, meta = self._local_topic_notes(
-                topic, subject, rag_context=rag_context, analysis_context=analysis_context
-            )
+            result, meta = self._local_topic_notes(topic, subject)
             if rag_sources:
                 meta["rag_sources"] = rag_sources[:8]
+            meta["generation_mode"] = "local_fallback"
             return result, meta
 
-        async def _generate_json(system_prompt: str, user_prompt: str):
-            return await self.llm_service._generate_json(
-                system_prompt,
-                user_prompt,
-                max_output_tokens=GEMINI_MAX_NOTES_TOKENS,
-                temperature=0.3,
-                top_p=0.9,
-            )
-
         try:
-            pipeline = ExamNotesPipeline(max_retries=2)
-            result, metadata = await pipeline.run(
+            result, metadata = await run_stage3_notes(
                 topic=topic,
-                generate_json=_generate_json,
-                rag_context=rag_context,
-                analysis_context=analysis_context,
                 subject=subject,
                 exam_priority=exam_priority,
-                pyq_questions=pyq_questions,
-                pipeline_context=pipeline_context,
+                generate_json=stage3_generate_json_factory(self.llm_service),
             )
             result["notes"] = clean_notes_markdown(result.get("notes") or "")
-            if not result["notes"]:
-                raise ExternalServiceError("AI returned empty notes content")
-            if is_placeholder_notes(result["notes"]):
-                raise ExternalServiceError(
-                    "AI returned instruction placeholders instead of study notes"
-                )
-
             if rag_sources:
                 metadata["rag_sources"] = rag_sources[:8]
-                metadata["rag_chunk_count"] = metadata.get("rag_chunk_count") or len(rag_sources)
-            metadata["generation_mode"] = "rag" if rag_context.strip() else "ai_only"
-            if result.get("structured"):
-                metadata["structured_notes"] = result["structured"]
             return result, metadata
+        except NotesSchemaError as exc:
+            raise ExternalServiceError(
+                "AI returned invalid notes JSON after repair",
+                details=list(exc.details or [{"reason": "NOTES_SCHEMA_INVALID"}]),
+            ) from exc
         except Exception as exc:
+            message = str(exc)
+            if "UNKNOWN_TOPIC" in message:
+                raise ExternalServiceError(
+                    f"Topic is too ambiguous for textbook notes: {topic}"
+                ) from exc
+            if isinstance(exc, ExternalServiceError):
+                raise
             logger.error("Exam notes pipeline failed topic=%s: %s", topic, exc)
-            result, meta = self._local_topic_notes(
-                topic, subject, rag_context=rag_context, analysis_context=analysis_context
-            )
-            meta["generation_error"] = _friendly_ai_error(str(exc))
-            meta["ai_error"] = str(exc)
+            result, meta = self._local_topic_notes(topic, subject)
+            meta["generation_error"] = _friendly_ai_error(message)
+            meta["ai_error"] = message
+            meta["generation_mode"] = "local_fallback"
             if rag_sources:
                 meta["rag_sources"] = rag_sources[:8]
             return result, meta
@@ -751,20 +749,25 @@ class AIService:
                 subject=subject,
             )
 
-        user_prompt = QUIZ_GENERATE_USER_PROMPT.format(
+        inputs = build_stage4_quiz_inputs(
+            subject=subject or "General",
+            topics=topics,
+            content=content,
             num_questions=num_questions,
             quiz_type=quiz_type,
             difficulty=difficulty,
-            subject=subject or "General",
-            topics=", ".join(topics) if topics else "General",
-            content=content[:30000] or "No additional content.",
         )
-        try:
-            result, metadata = await self._generate_json_with_fallback(
-                QUIZ_GENERATE_SYSTEM_PROMPT, user_prompt
+
+        async def _generate_json(system_prompt: str, user_prompt: str):
+            return await self.llm_service._generate_json(
+                system_prompt,
+                user_prompt,
+                temperature=0.3,
+                top_p=0.9,
             )
-            metadata["difficulty"] = difficulty
-            return result, metadata
+
+        try:
+            return await run_stage4_quiz(inputs=inputs, generate_json=_generate_json)
         except Exception as exc:
             logger.error("Quiz generation failed, using local template: %s", exc)
             result, meta = self._local_quiz_result(
@@ -775,4 +778,5 @@ class AIService:
                 subject=subject,
             )
             meta["generation_error"] = str(exc)
+            meta["generation_mode"] = "local_fallback"
             return result, meta

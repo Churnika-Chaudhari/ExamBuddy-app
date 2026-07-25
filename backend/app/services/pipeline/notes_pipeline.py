@@ -137,10 +137,10 @@ class NotesPipeline:
     ) -> str:
         """Extra context injected into notes prompt (never student-facing labels)."""
         parts: list[str] = [
-            "Generate FINAL ExamBuddy university exam notes (concise, complete, non-repetitive).",
+            "STAGE 3: Generate FINAL ExamBuddy university exam notes from the normalized topic only.",
+            "Do not use PYQ or uploaded PDF text.",
             "Include Definition, Working, Example, FAQs, 2/5/10 mark answers, Viva, Common Mistakes, Revision Summary, Keywords.",
             "Prefer Mermaid/ASCII diagrams and comparison tables when useful.",
-            "Use PYQs only for importance — never copy uploaded PDF text into notes.",
             "Never output placeholder instructions such as Explain, Provide, Discuss, or Write.",
             "Never include file names, subject codes, upload labels, marks, or AI mentions.",
             "Do not say the topic is important or frequently asked.",

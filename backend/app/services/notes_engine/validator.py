@@ -7,6 +7,12 @@ from typing import Any
 
 from app.services.ai.notes_sanitizer import is_placeholder_notes
 from app.services.notes_engine.markdown_formatter import _as_bullets, _as_text, _qa_pairs, _resolve
+from app.services.notes_engine.schema import (
+    SCHEMA_CONTENT_FIELDS,
+    SCHEMA_QA_LIST_FIELDS,
+    SCHEMA_STRING_FIELDS,
+    SCHEMA_STRING_LIST_FIELDS,
+)
 
 _NORMALIZE = re.compile(r"[^a-z0-9\s]+")
 
@@ -107,20 +113,149 @@ def deduplicate_structured_notes(data: dict[str, Any]) -> dict[str, Any]:
 
 
 class NotesValidationError(ValueError):
-    """Raised when generated notes fail quality gates."""
+    """Raised when generated notes fail schema or quality gates."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "NOTES_VALIDATION_ERROR",
+        details: list[Any] | None = None,
+    ) -> None:
+        self.code = code
+        self.details = details or []
+        super().__init__(message)
+
+
+class NotesSchemaError(NotesValidationError):
+    """Schema invalid after repair — surface as structured backend error."""
+
+    def __init__(
+        self,
+        message: str = "AI returned invalid notes JSON after repair",
+        *,
+        details: list[Any] | None = None,
+    ) -> None:
+        super().__init__(message, code="NOTES_SCHEMA_INVALID", details=details)
+
+
+def _is_nonempty_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict)):
+        return bool(value)
+    return True
+
+
+def validate_exam_notes_schema(data: Any) -> None:
+    """Validate LLM JSON against the ExamBuddy notes schema before formatting.
+
+    Raises NotesValidationError with code NOTES_SCHEMA_INVALID on structural
+    failures. UNKNOWN_TOPIC payloads are accepted as schema-valid.
+    """
+    if not isinstance(data, dict):
+        raise NotesValidationError(
+            "Notes JSON must be an object",
+            code="NOTES_SCHEMA_INVALID",
+            details=[{"field": "$", "error": "expected object"}],
+        )
+    if not data:
+        raise NotesValidationError(
+            "Notes JSON is empty",
+            code="NOTES_SCHEMA_INVALID",
+            details=[{"field": "$", "error": "empty object"}],
+        )
+
+    status = str(data.get("status") or "").strip().upper()
+    topic_val = str(data.get("topic") or "").strip().upper()
+    if status == "UNKNOWN_TOPIC" or topic_val == "UNKNOWN_TOPIC":
+        return
+
+    errors: list[dict[str, str]] = []
+
+    for key, value in data.items():
+        if value is None:
+            continue
+        if key in SCHEMA_STRING_FIELDS and not isinstance(value, str):
+            # Allow numbers coerced later; reject lists/dicts for scalar text.
+            if isinstance(value, (list, dict, bool)):
+                errors.append({"field": key, "error": "expected string"})
+        elif key in SCHEMA_STRING_LIST_FIELDS:
+            if not isinstance(value, list):
+                if not isinstance(value, str):
+                    errors.append({"field": key, "error": "expected string array"})
+            else:
+                for i, item in enumerate(value):
+                    if item is not None and not isinstance(item, (str, int, float)):
+                        errors.append({"field": f"{key}[{i}]", "error": "expected string"})
+        elif key in SCHEMA_QA_LIST_FIELDS:
+            if not isinstance(value, list):
+                errors.append({"field": key, "error": "expected FAQ array"})
+            else:
+                for i, item in enumerate(value):
+                    if isinstance(item, dict):
+                        q = item.get("question")
+                        a = item.get("answer")
+                        if q is not None and not isinstance(q, str):
+                            errors.append({"field": f"{key}[{i}].question", "error": "expected string"})
+                        if a is not None and not isinstance(a, str):
+                            errors.append({"field": f"{key}[{i}].answer", "error": "expected string"})
+                    elif not isinstance(item, str):
+                        errors.append({"field": f"{key}[{i}]", "error": "expected object or string"})
+        elif key == "comparison" and value is not None and not isinstance(value, (dict, str)):
+            errors.append({"field": "comparison", "error": "expected object or string"})
+
+    has_content = any(
+        _is_nonempty_value(data.get(field))
+        or _is_nonempty_value(data.get(alias))
+        for field in SCHEMA_CONTENT_FIELDS
+        for alias in (field, "whatIsIt", "howItWorks", "revisionSheet")
+    )
+    # Also accept common alias presence via resolve-like checks.
+    if not has_content:
+        has_content = bool(
+            _as_text(data.get("definition") or data.get("whatIsIt"))
+            or _as_text(data.get("working") or data.get("howItWorks"))
+            or _as_text(data.get("notes"))
+            or _as_bullets(data.get("revisionSummary") or data.get("revisionSheet"))
+            or _as_text(data.get("twoMarkAnswer"))
+        )
+    if not has_content:
+        errors.append({"field": "$", "error": "no content sections present"})
+
+    if errors:
+        raise NotesValidationError(
+            "Notes JSON failed ExamBuddy schema validation",
+            code="NOTES_SCHEMA_INVALID",
+            details=errors,
+        )
 
 
 def validate_exam_notes(data: dict[str, Any], *, markdown: str) -> None:
     """Fail fast on empty / placeholder / too-thin exam notes."""
     if not markdown or len(markdown.strip()) < 120:
-        raise NotesValidationError("Notes markdown too short")
+        raise NotesValidationError(
+            "Notes markdown too short",
+            code="NOTES_QUALITY_GATE",
+            details=[{"field": "markdown", "error": "too short"}],
+        )
     if is_placeholder_notes(markdown):
-        raise NotesValidationError("Notes contain instruction placeholders")
+        raise NotesValidationError(
+            "Notes contain instruction placeholders",
+            code="NOTES_QUALITY_GATE",
+            details=[{"field": "markdown", "error": "placeholder content"}],
+        )
 
     definition = _as_text(data.get("definition") or data.get("whatIsIt"))
     has_definition = bool(definition) or "## Definition" in markdown or "## 1. What is it?" in markdown
     if not has_definition:
-        raise NotesValidationError("Missing definition section")
+        raise NotesValidationError(
+            "Missing definition section",
+            code="NOTES_QUALITY_GATE",
+            details=[{"field": "definition", "error": "missing"}],
+        )
 
     has_revision = any(
         [
@@ -135,7 +270,11 @@ def validate_exam_notes(data: dict[str, Any], *, markdown: str) -> None:
         ]
     )
     if not has_revision:
-        raise NotesValidationError("Missing revision / mark-wise answer sections")
+        raise NotesValidationError(
+            "Missing revision / mark-wise answer sections",
+            code="NOTES_QUALITY_GATE",
+            details=[{"field": "revisionSummary", "error": "missing"}],
+        )
 
 
 def score_notes_quality(data: dict[str, Any], markdown: str) -> dict[str, Any]:

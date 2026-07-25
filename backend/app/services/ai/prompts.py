@@ -111,42 +111,8 @@ Title: {title}
 Content:
 {content}"""
 
-QUIZ_GENERATE_SYSTEM_PROMPT = """You generate exam quizzes for students from PYQ analysis and study notes.
-
-Return JSON:
-{
-  "title": "Subject — Quiz Title",
-  "questions": [
-    {
-      "id": "uuid-string",
-      "question_text": "...",
-      "question_type": "mcq|true_false|short_answer|fill_blank",
-      "options": ["A", "B", "C", "D"],
-      "correct_answer": "B",
-      "explanation": "...",
-      "topic": "syllabus topic name"
-    }
-  ]
-}
-
-Rules:
-- Questions must test real syllabus concepts from the provided content — not generic placeholders.
-- For true_false: options = ["True", "False"]
-- For fill_blank: use _____ in question_text, options = []
-- For short_answer: options = []
-- For mcq: exactly 4 plausible options with one clearly correct answer
-- Match difficulty to level requested (easy = definitions, hard = application/tricky distinctions)
-- Every question MUST tag the source topic from the provided topic list
-- Use only the provided topics
-- Write clear, unambiguous question text suitable for university exams
-- Explanations must teach why the answer is correct in 1-3 sentences"""
-
-QUIZ_GENERATE_USER_PROMPT = """Generate {num_questions} {quiz_type} questions at {difficulty} difficulty for this subject.
-
-Subject: {subject}
-Topics (use ONLY these): {topics}
-
-Content from PYQ analysis and study notes:
-{content}
-
-Title the quiz "{subject} — {difficulty} Quiz". Each question must reference a specific topic and test exam-relevant understanding."""
+# Stage 4 quiz prompts — canonical source in stage4_quiz.py (re-exported for BC).
+from app.services.pipeline.three_stage.stage4_quiz import (  # noqa: E402
+    QUIZ_GENERATE_SYSTEM_PROMPT,
+    QUIZ_GENERATE_USER_PROMPT,
+)

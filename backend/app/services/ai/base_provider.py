@@ -66,6 +66,7 @@ class BaseAIProvider(ABC):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         pass
 
@@ -114,9 +115,11 @@ class OpenAIProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         from openai import AsyncOpenAI
 
+        _ = response_schema  # Gemini structured schema; OpenAI uses json_object mode.
         client = AsyncOpenAI(api_key=self.api_key)
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -448,6 +451,7 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> str:
         url = f"{GEMINI_API_BASE}/models/{model_name}:generateContent"
         generation_config: dict[str, Any] = {
@@ -458,6 +462,8 @@ class GeminiProvider(BaseAIProvider):
             generation_config["topP"] = top_p
         if json_mode:
             generation_config["responseMimeType"] = "application/json"
+            if response_schema:
+                generation_config["responseSchema"] = response_schema
         if self._supports_thinking(model_name):
             generation_config["thinkingConfig"] = {"thinkingBudget": 0}
 
@@ -475,7 +481,29 @@ class GeminiProvider(BaseAIProvider):
         client = _get_http_client()
         response = await client.post(url, headers=headers, json=body)
         if response.status_code >= 400:
-            raise GeminiAPIError(response.status_code, response.text[:500])
+            # Some models reject responseSchema — retry once with MIME JSON only.
+            detail = response.text[:500]
+            if (
+                response_schema
+                and json_mode
+                and response.status_code == 400
+                and "schema" in detail.lower()
+            ):
+                logger.warning(
+                    "Gemini model %s rejected responseSchema — retrying JSON MIME only",
+                    model_name,
+                )
+                return await self._rest_generate(
+                    model_name,
+                    system_prompt,
+                    user_prompt,
+                    json_mode=True,
+                    max_output_tokens=max_output_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    response_schema=None,
+                )
+            raise GeminiAPIError(response.status_code, detail)
         data = response.json()
         text = self._extract_text(data)
         if not text:
@@ -492,6 +520,7 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> str:
         import google.generativeai as genai
 
@@ -504,6 +533,8 @@ class GeminiProvider(BaseAIProvider):
             generation_config["top_p"] = top_p
         if json_mode:
             generation_config["response_mime_type"] = "application/json"
+            if response_schema:
+                generation_config["response_schema"] = response_schema
         if self._supports_thinking(model_name):
             generation_config["thinking_config"] = {"thinking_budget": 0}
 
@@ -514,8 +545,9 @@ class GeminiProvider(BaseAIProvider):
                 generation_config=generation_config,
             )
         except (TypeError, ValueError):
-            # Older SDK builds may not accept thinking_config — drop it and retry.
+            # Older SDK builds may not accept thinking_config / response_schema.
             generation_config.pop("thinking_config", None)
+            generation_config.pop("response_schema", None)
             model = genai.GenerativeModel(
                 model_name=model_name,
                 system_instruction=system_prompt,
@@ -533,6 +565,7 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         last_exc: Exception | None = None
 
@@ -548,6 +581,7 @@ class GeminiProvider(BaseAIProvider):
                     max_output_tokens=max_output_tokens,
                     temperature=temperature,
                     top_p=top_p,
+                    response_schema=response_schema if json_mode else None,
                 )
                 if content.strip():
                     logger.info("Gemini rest generation succeeded model=%s", model_name)
@@ -573,6 +607,7 @@ class GeminiProvider(BaseAIProvider):
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
                 top_p=top_p,
+                response_schema=response_schema if json_mode else None,
             )
             if content.strip():
                 logger.info("Gemini sdk generation succeeded model=%s", self.model)
@@ -591,6 +626,7 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         content, model_name = await self._generate(
             system_prompt,
@@ -599,12 +635,14 @@ class GeminiProvider(BaseAIProvider):
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             top_p=top_p,
+            response_schema=response_schema,
         )
         parsed = self._parse_json_content(content)
         metadata = {
             "provider": "gemini",
             "model": model_name,
             "tokens_used": None,
+            "structured_json_mode": bool(response_schema),
         }
         return parsed, metadata
 

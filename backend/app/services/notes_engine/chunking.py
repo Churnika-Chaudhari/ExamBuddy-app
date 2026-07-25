@@ -1,4 +1,9 @@
-"""Semantic-ish chunking and context cleaning for exam notes generation."""
+"""Semantic-ish chunking and context cleaning for exam notes generation.
+
+NOTE: Not used by Stage 3 notes generation. Stage 3 receives only
+Subject / Topic / Exam Priority. This module is retained for legacy
+RAG/batch paths and may be removed when those paths are fully retired.
+"""
 
 from __future__ import annotations
 

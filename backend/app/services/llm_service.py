@@ -165,6 +165,7 @@ class LLMService:
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if not self.providers:
             raise ExternalServiceError("Configure OpenAI or Gemini API key in backend .env")
@@ -178,8 +179,11 @@ class LLMService:
                     max_output_tokens=max_output_tokens,
                     temperature=temperature,
                     top_p=top_p,
+                    response_schema=response_schema,
                 )
                 metadata["prompt_version"] = PROMPT_VERSION
+                if response_schema is not None:
+                    metadata["structured_json_mode"] = True
                 return result, metadata
             except Exception as exc:
                 logger.error("%s JSON generation failed: %s", name, exc)
@@ -197,19 +201,12 @@ class LLMService:
         exam_priority: str = "",
         pyq_questions: str = "",
     ) -> tuple[str, str]:
+        # Stage 3: ignore RAG/PYQ/pipeline text entirely — Subject/Topic/Exam Priority only.
+        _ = (rag_context, analysis_context, pipeline_context, pyq_questions)
         return build_exam_notes_prompts(
             topic=topic,
             subject=subject or "General",
-            rag_context=trim_context(rag_context, MAX_RAG_CONTEXT_CHARS),
-            analysis_context=trim_context(analysis_context, MAX_ANALYSIS_CONTEXT_CHARS)
-            or "No additional analysis signals.",
-            pipeline_context=trim_context(pipeline_context, MAX_PIPELINE_CONTEXT_CHARS),
-            exam_priority=exam_priority.strip() or "Standard syllabus priority",
-            pyq_questions=trim_context(pyq_questions, MAX_PYQ_QUESTIONS_CHARS)
-            or (
-                f"No direct PYQ text for '{topic}'. "
-                "Cover definition, key concepts, comparison, common mistakes, and typical 5/10-mark angles."
-            ),
+            exam_priority=exam_priority,
         )
 
     async def generate_topic_notes_json(
@@ -233,12 +230,15 @@ class LLMService:
             exam_priority=exam_priority,
             pyq_questions=pyq_questions,
         )
+        from app.services.notes_engine.schema import GEMINI_EXAM_NOTES_RESPONSE_SCHEMA
+
         return await self._generate_json(
             system_prompt,
             user_prompt,
             max_output_tokens=GEMINI_MAX_NOTES_TOKENS,
             temperature=NOTES_TEMPERATURE,
             top_p=NOTES_TOP_P,
+            response_schema=GEMINI_EXAM_NOTES_RESPONSE_SCHEMA,
         )
 
     async def stream_topic_notes_tokens(
@@ -299,6 +299,11 @@ class LLMService:
         num_documents: int,
         extracted_topics_hint: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """
+        LEGACY: Single-prompt PYQ analysis.
+
+        Production path uses Stage 1+2 via run_topic_pipeline in AnalysisService.
+        """
         user_prompt = PYQ_ANALYSIS_USER_PROMPT.format(
             subject=subject or "General",
             num_documents=num_documents,

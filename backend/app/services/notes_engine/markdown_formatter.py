@@ -180,7 +180,7 @@ def _append_table(lines: list[str], table: Any) -> None:
 
 
 def format_exam_notes_markdown(data: dict[str, Any]) -> str:
-    """Render ExamBuddy exam-note JSON into markdown."""
+    """Render ExamBuddy exam-note JSON into markdown (skip empty sections)."""
     topic = _as_text(data.get("topic") or data.get("title") or "Study Topic")
     lines: list[str] = [f"# {topic}", ""]
 
@@ -190,33 +190,45 @@ def format_exam_notes_markdown(data: dict[str, Any]) -> str:
 
     _append_section(lines, "Definition", _resolve(data, "definition"))
     _append_section(lines, "Introduction", _resolve(data, "introduction"))
-    _append_section(lines, "Detailed Explanation", _resolve(data, "detailedExplanation"))
-    _append_bullets(lines, "Key Concepts", _resolve(data, "keyConcepts"))
-    _append_bullets(lines, "Characteristics", _resolve(data, "characteristics"))
-    _append_section(lines, "Architecture", _resolve(data, "architecture"))
     _append_section(lines, "Working", _resolve(data, "working"))
-    _append_section(lines, "Syntax", _resolve(data, "syntax"))
-    _append_section(lines, "Pseudocode", _resolve(data, "pseudocode"))
-    _append_section(lines, "Code Example", _resolve(data, "codeExample"))
-    _append_section(lines, "Output", _resolve(data, "output"))
+    _append_section(lines, "Architecture", _resolve(data, "architecture"))
+    _append_section(lines, "Algorithm", _resolve(data, "algorithm"))
+    _append_section(lines, "Formula", _resolve(data, "formula") or _resolve(data, "formulae"))
     _append_diagram(lines, _resolve(data, "diagram"))
+    # Flowchart uses same Mermaid/ASCII rendering helper
+    flowchart = _resolve(data, "flowchart")
+    if _as_text(flowchart):
+        before = len(lines)
+        _append_diagram(lines, flowchart)
+        # Retitle Diagram → Flowchart when this block was appended
+        for i in range(before, len(lines)):
+            if lines[i] == "## Diagram":
+                lines[i] = "## Flowchart"
+                break
+    _append_section(lines, "Pseudocode", _resolve(data, "pseudocode"))
+    _append_section(lines, "Syntax", _resolve(data, "syntax"))
+    _append_section(lines, "Code Example", _resolve(data, "codeExample"))
+    _append_section(lines, "SQL Example", _resolve(data, "sqlExample"))
+    _append_section(lines, "Output", _resolve(data, "output"))
     _append_section(lines, "Example", _resolve(data, "example"))
     _append_section(lines, "Time Complexity", _resolve(data, "timeComplexity"))
     _append_section(lines, "Space Complexity", _resolve(data, "spaceComplexity"))
     _append_bullets(lines, "Advantages", _resolve(data, "advantages"))
     _append_bullets(lines, "Disadvantages", _resolve(data, "disadvantages"))
     _append_bullets(lines, "Applications", _resolve(data, "applications"))
-    _append_bullets(lines, "Important Formulae", _resolve(data, "formulae"))
     _append_table(lines, _resolve(data, "comparison"))
-    _append_qa(lines, "Frequently Asked University Questions", _resolve(data, "frequentlyAskedQuestions"))
+    # Ensure comparison heading matches requested name when present
+    for i, line in enumerate(lines):
+        if line.startswith("## Comparison"):
+            lines[i] = "## Comparison Table" if line == "## Comparison" else line.replace(
+                "## Comparison:", "## Comparison Table:", 1
+            )
+            break
+    _append_qa(lines, "Frequently Asked Questions", _resolve(data, "frequentlyAskedQuestions"))
     _append_section(lines, "2-Mark Answer", _resolve(data, "twoMarkAnswer"))
     _append_section(lines, "5-Mark Answer", _resolve(data, "fiveMarkAnswer"))
     _append_section(lines, "10-Mark Answer", _resolve(data, "tenMarkAnswer"))
-    _append_qa(lines, "Viva Questions", _resolve(data, "vivaQuestions"))
-    _append_qa(lines, "Interview Questions", _resolve(data, "interviewQuestions"))
-    _append_bullets(lines, "Common Mistakes", _resolve(data, "commonMistakes"))
     _append_bullets(lines, "Revision Summary", _resolve(data, "revisionSummary"), limit=12)
-    _append_bullets(lines, "Keywords", _resolve(data, "keywords"))
 
     return sanitize_note_text("\n".join(lines).strip())
 
@@ -230,33 +242,29 @@ def extract_exam_payload(data: dict[str, Any]) -> dict[str, Any]:
         "topicType",
         "definition",
         "introduction",
-        "detailedExplanation",
-        "keyConcepts",
         "working",
+        "architecture",
+        "algorithm",
+        "formula",
         "diagram",
+        "flowchart",
+        "pseudocode",
+        "syntax",
+        "codeExample",
+        "sqlExample",
         "example",
+        "timeComplexity",
+        "spaceComplexity",
         "advantages",
         "disadvantages",
         "applications",
-        "formulae",
+        "comparison",
         "frequentlyAskedQuestions",
         "twoMarkAnswer",
         "fiveMarkAnswer",
         "tenMarkAnswer",
-        "vivaQuestions",
-        "interviewQuestions",
-        "commonMistakes",
         "revisionSummary",
-        "keywords",
-        "characteristics",
-        "architecture",
-        "syntax",
-        "codeExample",
         "output",
-        "pseudocode",
-        "timeComplexity",
-        "spaceComplexity",
-        "comparison",
     ):
         value = _resolve(data, canonical)
         if value is not None:
