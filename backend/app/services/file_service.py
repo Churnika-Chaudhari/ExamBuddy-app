@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -61,7 +62,9 @@ class FileService:
             return self._upload_local(file_bytes, filename, user_id)
 
         try:
-            result = cloudinary.uploader.upload(
+            # Cloudinary SDK is blocking — keep the FastAPI event loop free.
+            result = await asyncio.to_thread(
+                cloudinary.uploader.upload,
                 file_bytes,
                 folder=folder,
                 resource_type="auto",

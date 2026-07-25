@@ -164,7 +164,8 @@ export default function UploadPYQScreen() {
     const poll = async (): Promise<void> => {
       const { data } = await documentsApi.getStatus(id);
       if (data.data.status === 'processing' || data.data.status === 'uploading') {
-        await new Promise((r) => setTimeout(r, 2000));
+        // Faster poll — extraction often finishes in a few seconds for digital PDFs.
+        await new Promise((r) => setTimeout(r, 800));
         return poll();
       }
       if (data.data.status === 'failed') {

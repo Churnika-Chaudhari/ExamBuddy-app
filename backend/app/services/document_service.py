@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -132,26 +133,33 @@ class DocumentService:
                 f"Maximum {settings.max_pyq_documents_per_analysis} files allowed per upload"
             )
 
-        uploaded: list[dict[str, Any]] = []
-        for file in files:
-            title = file.filename.rsplit(".", 1)[0] if file.filename and "." in file.filename else file.filename
-            per_file_subject = resolve_document_subject(
-                explicit_subject=subject,
-                filename=file.filename,
-                title=title,
-            )
-            doc = await self.upload_document(
-                user_id,
-                file,
-                title=title,
-                category=category,
-                subject=per_file_subject,
-                exam_year=exam_year,
-                description=None,
-                background_tasks=background_tasks,
-            )
-            uploaded.append(doc)
-        return uploaded
+        # Parallel Cloudinary + DB inserts (bounded) — much faster for multi-PDF uploads.
+        semaphore = asyncio.Semaphore(3)
+
+        async def _upload_one(file: UploadFile) -> dict[str, Any]:
+            async with semaphore:
+                title = (
+                    file.filename.rsplit(".", 1)[0]
+                    if file.filename and "." in file.filename
+                    else file.filename
+                )
+                per_file_subject = resolve_document_subject(
+                    explicit_subject=subject,
+                    filename=file.filename,
+                    title=title,
+                )
+                return await self.upload_document(
+                    user_id,
+                    file,
+                    title=title,
+                    category=category,
+                    subject=per_file_subject,
+                    exam_year=exam_year,
+                    description=None,
+                    background_tasks=background_tasks,
+                )
+
+        return list(await asyncio.gather(*[_upload_one(f) for f in files]))
 
     async def _process_document_text(
         self,

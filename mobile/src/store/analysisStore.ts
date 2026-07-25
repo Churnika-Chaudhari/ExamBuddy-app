@@ -68,7 +68,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       const analysis = data.data;
       set({ currentAnalysis: analysis });
       if (analysis.status === 'processing' || analysis.status === 'pending') {
-        await new Promise((r) => setTimeout(r, 3000));
+        await new Promise((r) => setTimeout(r, 1500));
         return poll();
       }
       return analysis;
