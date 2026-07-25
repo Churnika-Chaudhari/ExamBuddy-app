@@ -27,6 +27,8 @@ from typing import Any
 from app.services.pipeline.text_preprocessor import preprocess_pyq_text
 from app.services.pipeline.three_stage.models import Stage1Result, TopicItem, topics_from_dicts
 from app.services.pipeline.topic_pipeline import extract_and_merge_topics
+from app.utils.text_sanitizer import sanitize_topic_name
+from app.utils.text_sanitizer import sanitize_topic_name
 
 logger = logging.getLogger("exambuddy.pipeline.stage1")
 
@@ -63,6 +65,17 @@ Return JSON only. No notes.
 """
 
 
+def _filter_valid_topics(topics: list[TopicItem]) -> list[TopicItem]:
+    """Drop OCR/encoding garbage before topics reach Stage 2 / notes."""
+    out: list[TopicItem] = []
+    for item in topics:
+        name = sanitize_topic_name(item.name)
+        if not name:
+            continue
+        out.append(TopicItem(name=name, frequency=item.frequency))
+    return out
+
+
 def _from_local_analysis(
     local: dict[str, Any],
     *,
@@ -90,7 +103,18 @@ def _from_local_analysis(
                 if str(name).strip()
             ]
             topics.sort(key=lambda t: (-t.frequency, t.name.lower()))
-    return topics
+    return _filter_valid_topics(topics)
+
+
+def _filter_valid_topics(topics: list[TopicItem]) -> list[TopicItem]:
+    """Drop OCR/encoding garbage so corrupted names never reach Gemini."""
+    out: list[TopicItem] = []
+    for item in topics:
+        name = sanitize_topic_name(item.name)
+        if not name:
+            continue
+        out.append(TopicItem(name=name, frequency=item.frequency))
+    return out
 
 
 def extract_topics_local(
@@ -101,12 +125,19 @@ def extract_topics_local(
 ) -> Stage1Result:
     """Stage 1 local path: preprocess → extract topics → structured result."""
     subject_label = (subject or "General").strip() or "General"
+    logger.info("Stage1 local extract start subject=%s chars=%d", subject_label, len(pyq_text or ""))
     preprocessed = preprocess_pyq_text(pyq_text or "")
     local = extract_and_merge_topics(
         preprocessed.question_lines,
         num_documents=num_documents,
     )
-    topics = _from_local_analysis(local, subject=subject_label)
+    topics = _filter_valid_topics(_from_local_analysis(local, subject=subject_label))
+    logger.info(
+        "Stage1 local extract done topics=%d questions=%d sample=%s",
+        len(topics),
+        len(preprocessed.question_lines),
+        [t.name for t in topics[:8]],
+    )
     return Stage1Result(
         subject=subject_label,
         topics=topics,
@@ -151,9 +182,10 @@ async def extract_topics_with_ai(
 
     if not isinstance(raw, dict):
         return None
-    topics = topics_from_dicts(raw.get("topics"))
+    topics = _filter_valid_topics(topics_from_dicts(raw.get("topics")))
     if not topics:
         return None
+    logger.info("Stage 1 AI extracted topics=%d", len(topics))
     return Stage1Result(
         subject=str(raw.get("subject") or subject_label).strip() or subject_label,
         topics=topics,

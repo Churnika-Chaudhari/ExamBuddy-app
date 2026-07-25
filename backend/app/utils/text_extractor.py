@@ -2,6 +2,7 @@ import io
 import logging
 from typing import Any
 
+from app.utils.text_sanitizer import clean_extracted_text
 from app.utils.watermark_filter import remove_watermarks_from_pages, remove_watermarks_from_text
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,13 @@ def extract_text_from_pdf(file_bytes: bytes) -> tuple[str, int]:
             logger.warning("Watermark filter removed all text; using lightly filtered raw text")
             cleaned = remove_watermarks_from_text(raw_text)
 
+        cleaned = clean_extracted_text(cleaned)
+        logger.info(
+            "PDF extraction done pages=%d chars=%d sparse_ocr=%d",
+            page_count,
+            len(cleaned),
+            len(sparse_pages),
+        )
         return cleaned, page_count
     except Exception as exc:
         logger.error("PDF extraction failed: %s", exc)
@@ -111,13 +119,23 @@ def extract_text_from_image(file_bytes: bytes) -> tuple[str, int]:
 
 
 def extract_text(file_bytes: bytes, file_type: str) -> dict[str, Any]:
+    logger.info("Text extraction start file_type=%s bytes=%d", file_type, len(file_bytes or b""))
     if file_type == "pdf":
         text, page_count = extract_text_from_pdf(file_bytes)
     elif file_type == "docx":
         text, page_count = extract_text_from_docx(file_bytes)
+        text = clean_extracted_text(text)
     elif file_type == "image":
         text, page_count = extract_text_from_image(file_bytes)
+        text = clean_extracted_text(text)
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
 
+    logger.info(
+        "Text extraction complete file_type=%s pages=%d chars=%d preview=%r",
+        file_type,
+        page_count,
+        len(text),
+        (text[:120] + "…") if len(text) > 120 else text,
+    )
     return {"text": text, "page_count": page_count}

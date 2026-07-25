@@ -478,11 +478,25 @@ class GeminiProvider(BaseAIProvider):
             "x-goog-api-key": self.api_key,
         }
 
+        logger.info(
+            "Gemini request model=%s json_mode=%s schema=%s system_chars=%d user_chars=%d",
+            model_name,
+            json_mode,
+            bool(response_schema),
+            len(system_prompt or ""),
+            len(user_prompt or ""),
+        )
         client = _get_http_client()
         response = await client.post(url, headers=headers, json=body)
         if response.status_code >= 400:
             # Some models reject responseSchema — retry once with MIME JSON only.
             detail = response.text[:500]
+            logger.error(
+                "Gemini HTTP error model=%s status=%s detail=%s",
+                model_name,
+                response.status_code,
+                detail[:300],
+            )
             if (
                 response_schema
                 and json_mode
@@ -508,6 +522,12 @@ class GeminiProvider(BaseAIProvider):
         text = self._extract_text(data)
         if not text:
             raise RuntimeError("Gemini REST returned empty content")
+        logger.info(
+            "Gemini response model=%s chars=%d preview=%r",
+            model_name,
+            len(text),
+            (text[:160] + "…") if len(text) > 160 else text,
+        )
         return text
 
     async def _sdk_generate(
@@ -638,6 +658,18 @@ class GeminiProvider(BaseAIProvider):
             response_schema=response_schema,
         )
         parsed = self._parse_json_content(content)
+        if not parsed:
+            logger.error(
+                "Gemini JSON parse failed model=%s raw_preview=%r",
+                model_name,
+                (content[:240] + "…") if len(content) > 240 else content,
+            )
+            raise RuntimeError("Gemini returned non-JSON or unparseable content")
+        logger.info(
+            "Gemini JSON parse ok model=%s keys=%s",
+            model_name,
+            list(parsed.keys())[:20],
+        )
         metadata = {
             "provider": "gemini",
             "model": model_name,

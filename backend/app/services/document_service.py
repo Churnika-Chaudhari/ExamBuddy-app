@@ -162,12 +162,24 @@ class DocumentService:
         subject: str | None = None,
     ) -> None:
         try:
+            logger.info(
+                "PDF upload processing start document_id=%s file_type=%s bytes=%d",
+                document_id,
+                file_type,
+                len(file_bytes or b""),
+            )
             processed = await extract_and_chunk_async(file_bytes, file_type)
             if not processed["text"].strip():
                 raise ValidationAppError(
                     "No text could be extracted from this file. "
                     "Ensure the PDF contains selectable text (not a scanned image-only PDF)."
                 )
+            logger.info(
+                "PDF upload extraction ok document_id=%s pages=%d chars=%d",
+                document_id,
+                processed.get("page_count"),
+                len(processed["text"]),
+            )
             await self.document_repo.update(
                 document_id,
                 user_id,

@@ -66,6 +66,14 @@ class ExamNotesPipeline:
             subject=subject,
             exam_priority=exam_priority,
         )
+        logger.info(
+            "Stage3 prompt ready topic=%r subject=%r exam_priority=%s system_tokens~%d user=%r",
+            topic,
+            subject,
+            exam_priority,
+            estimate_tokens(system_prompt),
+            user_prompt,
+        )
         trace.mark(
             "prompt",
             system_tokens=estimate_tokens(system_prompt),

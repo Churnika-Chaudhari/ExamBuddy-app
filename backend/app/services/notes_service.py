@@ -28,6 +28,7 @@ from app.services.pipeline.three_stage import (
 from app.services.notes_engine.prompt_builder import normalize_exam_priority
 from app.services.mappers import map_document_response
 from app.utils.pdf_generator import generate_note_pdf_bytes
+from app.utils.text_sanitizer import looks_like_corrupted_topic, sanitize_topic_name
 from app.utils.topic_extractor import filter_topics
 
 logger = logging.getLogger(__name__)
@@ -112,9 +113,16 @@ class NotesService:
         frequency: int | None = None,
         regenerate: bool = False,
     ) -> dict[str, Any]:
-        topic = topic.strip()
+        topic = sanitize_topic_name(topic)
         if not topic:
-            raise ValidationAppError("Topic is required")
+            raise ValidationAppError(
+                "Topic name looks corrupted or empty (OCR/encoding garbage). "
+                "Re-upload a clearer PYQ PDF or pick a syllabus topic."
+            )
+        if looks_like_corrupted_topic(topic):
+            raise ValidationAppError(
+                f"Refusing to send corrupted topic to Gemini: {topic[:60]!r}"
+            )
 
         analysis_doc: dict[str, Any] | None = None
         if analysis_id:
@@ -124,16 +132,19 @@ class NotesService:
             subject = subject or analysis_doc.get("subject")
 
         # Normalization layer: notes consume ONLY confident textbook topic names.
+        logger.info("Notes normalize start topic=%r subject=%r", topic, subject)
         topic = await self._normalize_topic_for_notes(
             topic,
             subject=subject,
             analysis_doc=analysis_doc,
         )
-        if not topic or topic.upper() == UNKNOWN_TOPIC:
+        topic = sanitize_topic_name(topic)
+        if not topic or topic.upper() == UNKNOWN_TOPIC or looks_like_corrupted_topic(topic):
             raise ValidationAppError(
                 "UNKNOWN_TOPIC: cannot normalize this topic to a standard engineering "
                 "textbook name with confidence. Try a clearer syllabus topic."
             )
+        logger.info("Notes normalize done topic=%r", topic)
         topic_key = normalize_topic_key(topic)
 
         if not regenerate:
@@ -149,6 +160,8 @@ class NotesService:
                     or is_placeholder_notes(cached_notes)
                     or cached_meta.get("provider") == "local"
                     or cached_meta.get("generation_mode") == "local_fallback"
+                    or bool(cached_meta.get("generation_error") or cached_meta.get("ai_error"))
+                    or looks_like_corrupted_topic(cached.get("topic") or topic)
                     or cached_meta.get("notes_engine")
                     in {
                         None,

@@ -20,14 +20,20 @@ settings = reload_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     cfg = reload_settings()
-    gemini_ok = bool(cfg.gemini_api_key)
-    openai_ok = bool(cfg.openai_api_key)
+    gemini_ok = has_usable_api_key(cfg.gemini_api_key)
+    openai_ok = has_usable_api_key(cfg.openai_api_key)
     logger.info(
-        "AI config: provider=%s gemini=%s openai=%s",
+        "AI config: provider=%s gemini=%s openai=%s env_file_loaded=%s",
         cfg.ai_provider,
         "configured" if gemini_ok else "missing",
         "configured" if openai_ok else "missing",
+        bool(cfg.gemini_api_key or cfg.openai_api_key),
     )
+    if not gemini_ok and not openai_ok:
+        logger.error(
+            "No usable AI API key — topic notes will return EXTERNAL_SERVICE_ERROR. "
+            "Set GEMINI_API_KEY in backend/.env and Render Environment."
+        )
     await connect_to_mongo()
     await create_indexes(get_database())
     logger.info("SmartStudy API started")

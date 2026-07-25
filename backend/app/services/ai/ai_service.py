@@ -109,12 +109,15 @@ def clean_notes_markdown(text: str) -> str:
 def _friendly_ai_error(message: str) -> str:
     lower = message.lower()
     if "429" in message or "quota" in lower:
-        return "Gemini API quota exceeded. Notes generated from local template — retry later for AI notes."
-    if "401" in message or "403" in message or "api key" in lower:
-        return "Invalid or missing API key. Notes generated from local template."
+        return "Gemini API quota exceeded. Wait and try Regenerate, or check your Google AI billing/quota."
+    if "401" in message or "403" in message or "api key" in lower or "api_key" in lower:
+        return (
+            "Invalid or missing GEMINI_API_KEY. Set a valid Google AI Studio key "
+            "(usually starts with AIza…) in backend .env and on Render."
+        )
     if "404" in message and "model" in lower:
-        return "AI model unavailable. Notes generated from local template."
-    return "AI generation failed. Notes generated from local template."
+        return "Configured Gemini model is unavailable. Check GEMINI_MODEL in backend settings."
+    return f"AI notes generation failed: {message[:240]}"
 
 
 class AIService:
@@ -505,13 +508,19 @@ class AIService:
         pyq_questions: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         _ = (rag_context, analysis_context, pipeline_context, pyq_questions)
+        logger.info(
+            "Stage3 notes request topic=%r subject=%r exam_priority=%s ai_available=%s",
+            topic,
+            subject,
+            exam_priority,
+            self.ai_available,
+        )
         if not self.ai_available:
-            logger.warning("Notes local fallback — no AI provider configured for topic=%s", topic)
-            result, meta = self._local_topic_notes(topic, subject)
-            if rag_sources:
-                meta["rag_sources"] = rag_sources[:8]
-            meta["generation_mode"] = "local_fallback"
-            return result, meta
+            raise ExternalServiceError(
+                "GEMINI_API_KEY is not configured. Add a valid key to backend .env "
+                "(and Render Environment) then restart the API.",
+                details=[{"reason": "AI_NOT_CONFIGURED"}],
+            )
 
         try:
             result, metadata = await run_stage3_notes(
@@ -521,6 +530,18 @@ class AIService:
                 generate_json=stage3_generate_json_factory(self.llm_service),
             )
             result["notes"] = clean_notes_markdown(result.get("notes") or "")
+            if not result["notes"].strip():
+                raise ExternalServiceError(
+                    "Gemini returned empty notes content",
+                    details=[{"reason": "EMPTY_NOTES"}],
+                )
+            logger.info(
+                "Stage3 notes success topic=%r chars=%d provider=%s model=%s",
+                topic,
+                len(result["notes"]),
+                metadata.get("provider"),
+                metadata.get("model"),
+            )
             if rag_sources:
                 metadata["rag_sources"] = rag_sources[:8]
             return result, metadata
@@ -533,18 +554,17 @@ class AIService:
             message = str(exc)
             if "UNKNOWN_TOPIC" in message:
                 raise ExternalServiceError(
-                    f"Topic is too ambiguous for textbook notes: {topic}"
+                    f"Topic is too ambiguous for textbook notes: {topic}",
+                    details=[{"reason": "UNKNOWN_TOPIC", "topic": topic}],
                 ) from exc
             if isinstance(exc, ExternalServiceError):
                 raise
             logger.error("Exam notes pipeline failed topic=%s: %s", topic, exc)
-            result, meta = self._local_topic_notes(topic, subject)
-            meta["generation_error"] = _friendly_ai_error(message)
-            meta["ai_error"] = message
-            meta["generation_mode"] = "local_fallback"
-            if rag_sources:
-                meta["rag_sources"] = rag_sources[:8]
-            return result, meta
+            # Never return fake local-template notes — surface a real error.
+            raise ExternalServiceError(
+                _friendly_ai_error(message),
+                details=[{"reason": "GEMINI_NOTES_FAILED", "error": message[:400]}],
+            ) from exc
 
     async def stream_topic_notes(
         self,
