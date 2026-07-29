@@ -112,6 +112,45 @@ def deduplicate_structured_notes(data: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+# Defensive cap on any single free-text field. The model occasionally ignores
+# prompt length guidance and rambles for tens of thousands of characters on
+# one open-ended field (observed on "working"/"introduction" for well-known
+# topics), which produces unusable notes and risks truncating later JSON
+# fields against maxOutputTokens. This is enforced in code, independent of
+# prompt compliance.
+_MAX_FIELD_CHARS = 2200
+_MAX_LIST_ITEMS = 15
+_MAX_LIST_ITEM_CHARS = 600
+
+
+def _cap_text(value: str) -> str:
+    if len(value) <= _MAX_FIELD_CHARS:
+        return value
+    truncated = value[:_MAX_FIELD_CHARS].rsplit(" ", 1)[0].rstrip(".,;: ")
+    return truncated + "…"
+
+
+def cap_field_lengths(data: dict[str, Any]) -> dict[str, Any]:
+    """Hard-cap oversized string/list fields so a single runaway field can
+    never blow up the rendered notes or crowd out other sections."""
+    from app.services.notes_engine.schema import SCHEMA_STRING_FIELDS, SCHEMA_STRING_LIST_FIELDS
+
+    result = dict(data)
+    for key in list(result.keys()):
+        value = result[key]
+        if key in SCHEMA_STRING_FIELDS and isinstance(value, str) and value:
+            result[key] = _cap_text(value)
+        elif key in SCHEMA_STRING_LIST_FIELDS and isinstance(value, list):
+            capped_items = []
+            for item in value[:_MAX_LIST_ITEMS]:
+                if isinstance(item, str) and len(item) > _MAX_LIST_ITEM_CHARS:
+                    capped_items.append(item[:_MAX_LIST_ITEM_CHARS].rstrip() + "…")
+                else:
+                    capped_items.append(item)
+            result[key] = capped_items
+    return result
+
+
 class NotesValidationError(ValueError):
     """Raised when generated notes fail schema or quality gates."""
 
@@ -274,6 +313,104 @@ def validate_exam_notes(data: dict[str, Any], *, markdown: str) -> None:
             "Missing revision / mark-wise answer sections",
             code="NOTES_QUALITY_GATE",
             details=[{"field": "revisionSummary", "error": "missing"}],
+        )
+
+
+_WORD_RE = re.compile(r"[A-Za-z0-9']+")
+
+
+def count_words(markdown: str) -> int:
+    """Approximate word count of rendered markdown (used for the 2000-5000 word gate)."""
+    return len(_WORD_RE.findall(markdown or ""))
+
+
+def validate_section_payload(section_id: str, data: Any) -> None:
+    """Validate ONE section batch's JSON payload before merging it into the document.
+
+    Raises NotesValidationError(code="SECTION_SCHEMA_INVALID") on missing/thin
+    fields so the pipeline can attempt a single scoped repair for that batch only.
+    """
+    from app.services.notes_engine.schema import SECTION_VALIDATION_RULES
+
+    if not isinstance(data, dict) or not data:
+        raise NotesValidationError(
+            f"Section '{section_id}' returned empty or non-object JSON",
+            code="SECTION_SCHEMA_INVALID",
+            details=[{"section": section_id, "field": "$", "error": "empty or non-object"}],
+        )
+
+    rules = SECTION_VALIDATION_RULES.get(section_id, {})
+    errors: list[dict[str, str]] = []
+
+    for field, rule in rules.items():
+        value = data.get(field)
+        kind = rule.get("kind")
+        min_items = rule.get("min_items") or 1
+
+        if kind == "text":
+            if not _as_text(value):
+                errors.append({"section": section_id, "field": field, "error": "missing"})
+        elif kind == "list":
+            items = value if isinstance(value, list) else ([value] if _is_nonempty_value(value) else [])
+            if len(items) < min_items:
+                errors.append(
+                    {
+                        "section": section_id,
+                        "field": field,
+                        "error": f"expected >= {min_items} items, got {len(items)}",
+                    }
+                )
+        elif kind == "qa_list":
+            pairs = _qa_pairs(value)
+            if len(pairs) < min_items:
+                errors.append(
+                    {
+                        "section": section_id,
+                        "field": field,
+                        "error": f"expected >= {min_items} Q&A pairs, got {len(pairs)}",
+                    }
+                )
+
+    if errors:
+        raise NotesValidationError(
+            f"Section '{section_id}' failed content validation",
+            code="SECTION_SCHEMA_INVALID",
+            details=errors,
+        )
+
+
+def validate_final_notes(markdown: str, structured: dict[str, Any], *, word_count: int) -> None:
+    """Fail fast on a thin, "summary-style", or structurally incomplete final document."""
+    from app.services.notes_engine.schema import MIN_WORD_COUNT_SOFT, REQUIRED_HEADING_KEYWORDS
+
+    _ = structured
+    if not markdown or len(markdown.strip()) < 800:
+        raise NotesValidationError(
+            "Merged notes markdown too short",
+            code="NOTES_QUALITY_GATE",
+            details=[{"field": "markdown", "error": "too short"}],
+        )
+    if is_placeholder_notes(markdown):
+        raise NotesValidationError(
+            "Notes contain instruction placeholders",
+            code="NOTES_QUALITY_GATE",
+            details=[{"field": "markdown", "error": "placeholder content"}],
+        )
+
+    lowered = markdown.lower()
+    missing = [kw for kw in REQUIRED_HEADING_KEYWORDS if kw not in lowered]
+    if missing:
+        raise NotesValidationError(
+            "Final notes missing required headings",
+            code="NOTES_MISSING_HEADINGS",
+            details=[{"field": "headings", "missing": missing}],
+        )
+
+    if word_count < MIN_WORD_COUNT_SOFT:
+        raise NotesValidationError(
+            f"Final notes too short ({word_count} words, need >= {MIN_WORD_COUNT_SOFT})",
+            code="NOTES_TOO_SHORT",
+            details=[{"field": "word_count", "value": word_count, "min": MIN_WORD_COUNT_SOFT}],
         )
 
 

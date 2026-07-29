@@ -16,12 +16,9 @@ from app.services.ai.notes_sanitizer import sanitize_note_text
 from app.services.llm_service import LLMService, should_skip_pyq_llm
 from app.utils.topic_extractor import sanitize_analysis_result
 from app.services.ai.notes_structured import (
-    extract_structured_payload,
     is_structured_notes_result,
     structured_notes_to_markdown,
 )
-from app.services.notes_engine.pipeline import ExamNotesPipeline
-from app.services.notes_engine.markdown_formatter import format_exam_notes_markdown
 from app.services.notes_engine.validator import NotesSchemaError
 from app.services.pipeline.three_stage import (
     run_stage3_notes,
@@ -295,142 +292,6 @@ class AIService:
         }
         return result, metadata
 
-    def _local_topic_notes(
-        self,
-        topic: str,
-        subject: str | None,
-        *,
-        rag_context: str = "",
-        analysis_context: str = "",
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        subject_label = subject or "engineering"
-        material = self._usable_study_material(rag_context)
-
-        structured: dict[str, Any] = {
-            "topic": topic,
-            "topicType": "Theory",
-            "definition": (
-                f"**{topic}** is a core {subject_label} concept that describes the principles "
-                f"and methods used to understand and solve problems related to {topic}."
-            ),
-            "introduction": (
-                f"In university exams, {topic} is usually tested as definition + working + example. "
-                f"Students score well when they explain why {topic} exists before listing steps."
-            ),
-            "detailedExplanation": material
-            or (
-                f"**{topic}** connects a practical problem to a repeatable method.\n"
-                f"1. Identify the goal of {topic}\n"
-                f"2. List the main ideas / parts\n"
-                f"3. Show how each part contributes\n"
-                f"4. Close with one limitation or related concept"
-            ),
-            "keyConcepts": [
-                f"**Definition** — precise meaning of {topic}",
-                f"**Working** — ordered steps / mechanism",
-                f"**Example** — one concrete case",
-            ],
-            "working": (
-                f"1. Identify the input / situation for {topic}\n"
-                f"2. Apply the main rule or mechanism\n"
-                f"3. Follow intermediate steps in order\n"
-                f"4. State the final result"
-            ),
-            "diagram": (
-                "flowchart TD\n"
-                f"A[Problem] --> B[{topic}]\n"
-                "B --> C[Working steps]\n"
-                "C --> D[Result / Example]"
-            ),
-            "example": (
-                f"Exam-style: define {topic}, write 4–5 working steps, finish with one short example."
-            ),
-            "advantages": [
-                f"Gives a clear structure for answering {topic} questions",
-                "Supports definition + working + example marking patterns",
-            ],
-            "disadvantages": [
-                "Local fallback notes are thinner than full AI notes — configure GEMINI_API_KEY for complete ExamBuddy notes",
-            ],
-            "applications": [
-                f"Theory and viva questions on {topic}",
-                f"Short and long answer questions in {subject_label}",
-            ],
-            "comparison": {
-                "title": f"{topic} vs related idea",
-                "headers": ["Aspect", topic, "Related concept"],
-                "rows": [
-                    ["Focus", f"Core idea of {topic}", "Often confused neighbour topic"],
-                    ["Exam tip", "Definition + working + example", "Know the difference clearly"],
-                ],
-            },
-            "frequentlyAskedQuestions": [
-                {
-                    "question": f"Define {topic}.",
-                    "answer": f"**{topic}** is a {subject_label} concept describing principles used for problems related to {topic}.",
-                },
-                {
-                    "question": f"Explain the working of {topic}.",
-                    "answer": f"State the goal, list ordered stages of {topic}, and end with the expected result.",
-                },
-                {
-                    "question": f"Give one application of {topic}.",
-                    "answer": f"Use {topic} wherever the subject needs a structured method for related problems.",
-                },
-            ],
-            "twoMarkAnswer": f"**{topic}** is a {subject_label} concept used to solve problems involving {topic}.",
-            "fiveMarkAnswer": (
-                f"Definition: **{topic}** is ...\n"
-                f"Working: list 4 steps.\n"
-                f"Example: one short case.\n"
-                f"Close with one advantage."
-            ),
-            "tenMarkAnswer": (
-                f"1. Definition of **{topic}**\n"
-                f"2. Why it is needed\n"
-                f"3. Detailed working with diagram\n"
-                f"4. Example\n"
-                f"5. Advantages, limitations, and one related comparison"
-            ),
-            "vivaQuestions": [
-                {"question": f"What is {topic}?", "answer": f"A core {subject_label} concept for problems involving {topic}."},
-                {"question": f"Why do we use {topic}?", "answer": "It gives a repeatable method and clear exam structure."},
-                {"question": "What comes first in a long answer?", "answer": "Definition, then working, then example."},
-                {"question": f"Name one common mistake in {topic}.", "answer": "Memorising the name without working steps."},
-            ],
-            "interviewQuestions": [
-                {"question": f"Explain {topic} in one minute.", "answer": f"Goal → mechanism → one example of {topic}."},
-            ],
-            "commonMistakes": [
-                f"Memorising only the name of {topic} without working steps",
-                f"Mixing {topic} with a closely related concept",
-            ],
-            "revisionSummary": [
-                f"**{topic}** = core {subject_label} idea",
-                "Definition first",
-                "Then working steps",
-                "One example",
-                "Advantages + limitations",
-                "2/5/10 mark structure ready",
-            ],
-            "keywords": [topic, subject_label, "definition", "working", "example"],
-        }
-
-        notes = format_exam_notes_markdown(structured)
-        meta: dict[str, Any] = {
-            "provider": "local",
-            "model": "rule-based",
-            "prompt_version": PROMPT_VERSION,
-            "rag_chunk_count": 1 if material else 0,
-            "generation_mode": "local_fallback",
-            "notes_engine": "exambuddy_stage3_v20",
-        }
-        return {
-            "notes": notes,
-            "summary": f"ExamBuddy exam notes for {topic}. Configure GEMINI_API_KEY for full AI notes.",
-            "structured": structured,
-        }, meta
-
     @staticmethod
     def _usable_study_material(rag_context: str, *, limit: int = 1800) -> str:
         """Turn retrieved snippets into readable teaching paragraphs (no instruction stubs)."""
@@ -454,45 +315,6 @@ class AIService:
             return ""
         joined = "\n\n".join(chunks)
         return joined[:limit].rstrip()
-
-    def _normalize_topic_result(self, result: dict[str, Any], *, topic: str = "") -> dict[str, Any]:
-        """Normalize LLM JSON through the exam-notes postprocess pipeline."""
-        pipeline = ExamNotesPipeline(max_retries=1)
-        try:
-            processed = pipeline.postprocess(result, topic=topic)
-            return {
-                "notes": clean_notes_markdown(processed["notes"]),
-                "summary": clean_notes_markdown(str(processed.get("summary") or "")).strip() or None,
-                "structured": processed.get("structured"),
-                "quality": processed.get("quality"),
-            }
-        except Exception:
-            # Legacy structured / plain markdown fallback for unexpected shapes
-            if is_structured_notes_result(result):
-                structured = extract_structured_payload(result)
-                if topic and not structured.get("topic"):
-                    structured["topic"] = topic
-                notes = structured_notes_to_markdown(structured)
-                summary = clean_notes_markdown(
-                    str(structured.get("summary") or result.get("summary") or "")
-                ).strip()
-                return {
-                    "notes": clean_notes_markdown(notes),
-                    "summary": summary or None,
-                    "structured": structured,
-                }
-
-            notes = (
-                result.get("notes")
-                or result.get("content")
-                or result.get("markdown")
-                or ""
-            )
-            if isinstance(notes, dict):
-                notes = str(notes)
-            notes = clean_notes_markdown(str(notes))
-            summary = clean_notes_markdown(str(result.get("summary") or "")).strip()
-            return {"notes": notes, "summary": summary or None, "structured": None}
 
     async def generate_topic_notes(
         self,
@@ -527,7 +349,7 @@ class AIService:
                 topic=topic,
                 subject=subject,
                 exam_priority=exam_priority,
-                generate_json=stage3_generate_json_factory(self.llm_service),
+                generate_section_json=stage3_generate_json_factory(self.llm_service),
             )
             result["notes"] = clean_notes_markdown(result.get("notes") or "")
             if not result["notes"].strip():
@@ -536,11 +358,13 @@ class AIService:
                     details=[{"reason": "EMPTY_NOTES"}],
                 )
             logger.info(
-                "Stage3 notes success topic=%r chars=%d provider=%s model=%s",
+                "Stage3 notes success topic=%r chars=%d word_count=%s provider=%s model=%s engine=%s",
                 topic,
                 len(result["notes"]),
+                metadata.get("word_count"),
                 metadata.get("provider"),
                 metadata.get("model"),
+                metadata.get("notes_engine"),
             )
             if rag_sources:
                 metadata["rag_sources"] = rag_sources[:8]
@@ -577,17 +401,24 @@ class AIService:
         exam_priority: str = "",
         pyq_questions: str = "",
     ):
-        """Stream LLM tokens for progressive notes rendering."""
-        async for token in self.llm_service.stream_topic_notes_tokens(
-            topic,
-            rag_context=rag_context,
-            analysis_context=analysis_context,
-            subject=subject,
-            pipeline_context=pipeline_context,
-            exam_priority=exam_priority,
-            pyq_questions=pyq_questions,
-        ):
-            yield token
+        """
+        Stream progressive markdown chunks for a topic.
+
+        The sectioned engine issues ~11 focused Gemini calls internally and only
+        produces a coherent document once ALL of them are merged and validated
+        (a partial document would fail the heading/word-count gate) — so this
+        yields the completed document split into per-heading chunks for a
+        progressive-render UX rather than raw token-by-token streaming.
+        """
+        _ = (rag_context, analysis_context, pipeline_context, pyq_questions)
+        result, _metadata = await self.generate_topic_notes(
+            topic, subject=subject, exam_priority=exam_priority
+        )
+        notes = result.get("notes") or ""
+        chunks = re.split(r"(?=\n# )", notes)
+        for chunk in chunks:
+            if chunk.strip():
+                yield chunk
 
     def _normalize_batch_notes_result(
         self,

@@ -28,7 +28,12 @@ def _get_http_client() -> httpx.AsyncClient:
     global _shared_client
     if _shared_client is None or _shared_client.is_closed:
         _shared_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=90.0, write=30.0, pool=15.0),
+            # Structured exam-notes responses (large responseSchema +
+            # GEMINI_MAX_NOTES_TOKENS) routinely take 90-150s end-to-end.
+            # A 90s read timeout silently killed every real notes call
+            # (httpx.ReadTimeout stringifies to "") which then fell through
+            # to fallback models / local templates. 180s gives real headroom.
+            timeout=httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0),
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
     return _shared_client
@@ -51,9 +56,26 @@ class GeminiAPIError(RuntimeError):
 
     @property
     def is_fatal(self) -> bool:
-        # Quota and auth errors will fail identically on every model, so there
-        # is no point burning seconds retrying — fail fast to the local fallback.
-        return self.status_code in (401, 403, 429)
+        # Auth errors fail identically on every model — no point burning seconds
+        # retrying. 429 quota errors are usually per-model/per-project-tier, so
+        # a different fallback model can genuinely succeed — let the caller's
+        # model loop try it instead of failing the whole request immediately.
+        return self.status_code in (401, 403)
+
+    @property
+    def is_rate_limited(self) -> bool:
+        return self.status_code == 429
+
+    @property
+    def retry_delay_seconds(self) -> float | None:
+        """Best-effort parse of Gemini's suggested retry delay from the error body."""
+        match = re.search(r"retry in\s*([\d.]+)\s*s", self.detail, re.I)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                return None
+        return None
 
 
 class BaseAIProvider(ABC):
@@ -613,7 +635,14 @@ class GeminiProvider(BaseAIProvider):
                     raise
                 logger.warning("Gemini rest model %s failed: %s", model_name, exc)
             except Exception as exc:
-                logger.warning("Gemini rest model %s failed: %s", model_name, exc)
+                # httpx timeouts (e.g. ReadTimeout) often stringify to "" —
+                # always include the exception type so timeouts are visible in logs.
+                logger.warning(
+                    "Gemini rest model %s failed: %s: %s",
+                    model_name,
+                    type(exc).__name__,
+                    exc or "(no message — likely a network timeout)",
+                )
                 last_exc = exc
 
         # Pass 2: single SDK attempt with the primary model as a last resort

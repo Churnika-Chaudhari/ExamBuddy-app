@@ -1,35 +1,28 @@
 """
-Centralized LLM orchestration — context trimming, call minimization, streaming.
+Centralized LLM orchestration — context trimming, call minimization.
 
 Performance goals:
 - Pass only small, topic-relevant snippets to the model
 - Skip redundant PYQ analysis LLM calls when local pipeline is sufficient
-- Single structured JSON call per topic for notes (no nested queries)
-- Optional token streaming for progressive UI updates
+- Small, focused structured-JSON calls per notes section batch (never one
+  mega-call per topic) — see app.services.notes_engine for the sectioned
+  Stage-3 notes pipeline that drives this.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from collections.abc import AsyncIterator
 from typing import Any
 
 from app.core.config import get_settings, reload_settings
 from app.core.exceptions import ExternalServiceError
-from app.services.ai.base_provider import (
-    GEMINI_MAX_NOTES_TOKENS,
-    BaseAIProvider,
-    GeminiProvider,
-    OpenAIProvider,
-)
+from app.services.ai.base_provider import BaseAIProvider, GeminiProvider, OpenAIProvider
 from app.services.ai.provider_order import resolve_provider_order
 from app.services.ai.prompts import (
     PROMPT_VERSION,
     PYQ_ANALYSIS_SYSTEM_PROMPT,
     PYQ_ANALYSIS_USER_PROMPT,
 )
-from app.services.notes_engine.prompt_builder import build_exam_notes_prompts
 
 
 logger = logging.getLogger(__name__)
@@ -190,106 +183,31 @@ class LLMService:
                 last_exc = exc
         raise ExternalServiceError("AI generation failed for all configured providers") from last_exc
 
-    def build_topic_notes_prompts(
+    async def generate_notes_section_json(
         self,
-        topic: str,
+        system_prompt: str,
+        user_prompt: str,
         *,
-        rag_context: str = "",
-        analysis_context: str = "",
-        subject: str | None = None,
-        pipeline_context: str = "",
-        exam_priority: str = "",
-        pyq_questions: str = "",
-    ) -> tuple[str, str]:
-        # Stage 3: ignore RAG/PYQ/pipeline text entirely — Subject/Topic/Exam Priority only.
-        _ = (rag_context, analysis_context, pipeline_context, pyq_questions)
-        return build_exam_notes_prompts(
-            topic=topic,
-            subject=subject or "General",
-            exam_priority=exam_priority,
-        )
-
-    async def generate_topic_notes_json(
-        self,
-        topic: str,
-        *,
-        rag_context: str = "",
-        analysis_context: str = "",
-        subject: str | None = None,
-        pipeline_context: str = "",
-        exam_priority: str = "",
-        pyq_questions: str = "",
+        response_schema: dict[str, Any],
+        max_output_tokens: int,
+        temperature: float = NOTES_TEMPERATURE,
+        top_p: float = NOTES_TOP_P,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Single structured LLM call for topic notes."""
-        system_prompt, user_prompt = self.build_topic_notes_prompts(
-            topic,
-            rag_context=rag_context,
-            analysis_context=analysis_context,
-            subject=subject,
-            pipeline_context=pipeline_context,
-            exam_priority=exam_priority,
-            pyq_questions=pyq_questions,
-        )
-        from app.services.notes_engine.schema import GEMINI_EXAM_NOTES_RESPONSE_SCHEMA
+        """
+        One focused structured-JSON call for a SINGLE Stage-3 notes section batch.
 
+        The sectioned engine (app.services.notes_engine) issues ~11 of these per
+        topic — small compact schemas, never one mega-call — then merges the
+        results into one long-form markdown chapter.
+        """
         return await self._generate_json(
             system_prompt,
             user_prompt,
-            max_output_tokens=GEMINI_MAX_NOTES_TOKENS,
-            temperature=NOTES_TEMPERATURE,
-            top_p=NOTES_TOP_P,
-            response_schema=GEMINI_EXAM_NOTES_RESPONSE_SCHEMA,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            response_schema=response_schema,
         )
-
-    async def stream_topic_notes_tokens(
-        self,
-        topic: str,
-        *,
-        rag_context: str = "",
-        analysis_context: str = "",
-        subject: str | None = None,
-        pipeline_context: str = "",
-        exam_priority: str = "",
-        pyq_questions: str = "",
-    ) -> AsyncIterator[str]:
-        """
-        Stream raw model tokens for progressive UI rendering.
-        Yields text fragments as they arrive from the provider.
-        """
-        if not self.providers:
-            raise ExternalServiceError("Configure OpenAI or Gemini API key in backend .env")
-
-        system_prompt, user_prompt = self.build_topic_notes_prompts(
-            topic,
-            rag_context=rag_context,
-            analysis_context=analysis_context,
-            subject=subject,
-            pipeline_context=pipeline_context,
-            exam_priority=exam_priority,
-            pyq_questions=pyq_questions,
-        )
-
-        last_exc: Exception | None = None
-        for name, provider in self.providers:
-            stream_fn = getattr(provider, "stream_text", None)
-            if not callable(stream_fn):
-                continue
-            try:
-                async for token in stream_fn(
-                    system_prompt,
-                    user_prompt,
-                    max_output_tokens=GEMINI_MAX_NOTES_TOKENS,
-                    temperature=NOTES_TEMPERATURE,
-                    top_p=NOTES_TOP_P,
-                ):
-                    if token:
-                        yield token
-                return
-            except Exception as exc:
-                logger.warning("%s stream failed: %s", name, exc)
-                last_exc = exc
-
-        raise ExternalServiceError("Streaming not available") from last_exc
 
     async def analyze_pyq_with_llm(
         self,

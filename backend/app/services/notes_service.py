@@ -26,6 +26,7 @@ from app.services.pipeline.three_stage import (
     normalize_single_topic,
 )
 from app.services.notes_engine.prompt_builder import normalize_exam_priority
+from app.services.notes_engine.schema import SECTIONED_ENGINE_ID
 from app.services.mappers import map_document_response
 from app.utils.pdf_generator import generate_note_pdf_bytes
 from app.utils.text_sanitizer import looks_like_corrupted_topic, sanitize_topic_name
@@ -155,23 +156,20 @@ class NotesService:
                 cached_meta = cached.get("ai_metadata") or {}
                 cached_version = cached_meta.get("prompt_version")
                 cached_notes = str(cached.get("notes") or "")
+                # Allowlist (not a blacklist): only notes produced by the CURRENT
+                # sectioned engine are trusted from cache. Every prior engine id
+                # (v17/v18/v19/v20/v21 single-call JSON, or missing entirely) is
+                # treated as stale and regenerated through the new pipeline.
                 skip_cache = (
                     cached_version != PROMPT_VERSION
+                    or cached_meta.get("notes_engine") != SECTIONED_ENGINE_ID
                     or is_placeholder_notes(cached_notes)
                     or cached_meta.get("provider") == "local"
                     or cached_meta.get("generation_mode") == "local_fallback"
                     or bool(cached_meta.get("generation_error") or cached_meta.get("ai_error"))
                     or looks_like_corrupted_topic(cached.get("topic") or topic)
-                    or cached_meta.get("notes_engine")
-                    in {
-                        None,
-                        "",
-                        "exam_v17",
-                        "professor_alex_v18",
-                        "exambuddy_exam_v19",
-                        "exambuddy_stage3_v20",
-                    }
                     or cached_meta.get("pipeline_version") != PIPELINE_VERSION
+                    or int(cached_meta.get("word_count") or 0) < 1500
                 )
                 if not skip_cache:
                     logger.info("Returning cached notes for topic=%s", topic)

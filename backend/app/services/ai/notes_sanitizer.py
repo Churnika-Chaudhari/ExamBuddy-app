@@ -135,7 +135,13 @@ def is_placeholder_notes(notes: str) -> bool:
 
 
 def sanitize_note_text(text: str) -> str:
-    """Remove metadata, filenames, filler, and exam-paper scaffolding from note text."""
+    """Remove metadata, filenames, filler, and exam-paper scaffolding from note text.
+
+    Preserves a single blank line between blocks (paragraphs / headings /
+    tables) — CommonMark markdown renderers require a blank line before a
+    table or list to parse it as its own block, so dropping all blank lines
+    (the old behaviour) silently corrupted table/heading rendering.
+    """
     if not text:
         return ""
 
@@ -143,6 +149,11 @@ def sanitize_note_text(text: str) -> str:
     out: list[str] = []
 
     for raw in text.split("\n"):
+        if not raw.strip():
+            if out and out[-1] != "":
+                out.append("")
+            continue
+
         line = _INLINE_STRIP.sub("", raw).strip()
         if not line:
             continue

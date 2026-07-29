@@ -272,6 +272,252 @@ def extract_exam_payload(data: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+# =============================================================================
+# v30 — Sectioned NotebookLM-style markdown renderer.
+#
+# Renders the merged structured dict (11 batches — see schema.SECTION_ORDER)
+# into ONE long-form textbook-chapter markdown document covering every
+# required heading. A heading with no accurate content for the topic renders
+# "Not Applicable" — it is never omitted.
+# =============================================================================
+
+
+def _na(value: Any) -> str:
+    text = _as_text(value)
+    return text if text else "Not Applicable"
+
+
+def _append_section_h1(lines: list[str], title: str, value: Any) -> None:
+    lines.append(f"# {title}")
+    lines.append("")
+    lines.append(_na(value))
+    lines.append("")
+
+
+def _append_code_section_h1(lines: list[str], title: str, value: Any) -> None:
+    lines.append(f"# {title}")
+    lines.append("")
+    text = _as_text(value)
+    if not text or text.strip().lower() == "not applicable":
+        lines.append("Not Applicable")
+        lines.append("")
+        return
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines.extend([stripped, ""])
+    else:
+        lines.extend(["```", stripped, "```", ""])
+
+
+def _append_diagram_h1(lines: list[str], title: str, value: Any) -> None:
+    lines.append(f"# {title}")
+    lines.append("")
+    text = _as_text(value)
+    if not text or text.strip().lower() == "not applicable":
+        lines.append("Not Applicable")
+        lines.append("")
+        return
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines.extend([stripped, ""])
+        return
+    lower = stripped.lower()
+    if lower.startswith(
+        ("flowchart", "sequencediagram", "graph ", "graph td", "graph lr", "classdiagram", "erdiagram", "statediagram")
+    ):
+        lines.extend(["```mermaid", stripped, "```", ""])
+    else:
+        lines.extend(["```", stripped, "```", ""])
+
+
+def _append_bullets_h1(lines: list[str], title: str, value: Any) -> None:
+    lines.append(f"# {title}")
+    lines.append("")
+    bullets = _as_bullets(value)
+    if not bullets:
+        lines.append("Not Applicable")
+    else:
+        lines.extend(f"- {b}" for b in bullets)
+    lines.append("")
+
+
+def _table_rows(items: Any) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                point = _as_text(item.get("point") or item.get("title") or item.get("name"))
+                explanation = _as_text(
+                    item.get("explanation") or item.get("description") or item.get("detail")
+                )
+                if point or explanation:
+                    rows.append((point or explanation, explanation if point else ""))
+            elif isinstance(item, str) and item.strip():
+                text = item.strip()
+                if " — " in text:
+                    point, explanation = text.split(" — ", 1)
+                elif ": " in text:
+                    point, explanation = text.split(": ", 1)
+                else:
+                    point, explanation = text, ""
+                rows.append((point.strip(), explanation.strip()))
+    elif isinstance(items, str) and items.strip():
+        rows.append((items.strip(), ""))
+    return rows
+
+
+def _append_kv_table_h1(
+    lines: list[str], title: str, items: Any, *, col1: str = "Point", col2: str = "Explanation"
+) -> None:
+    lines.append(f"# {title}")
+    lines.append("")
+    rows = _table_rows(items)
+    if not rows:
+        lines.append("Not Applicable")
+        lines.append("")
+        return
+    lines.append(f"| {col1} | {col2} |")
+    lines.append("|---|---|")
+    for point, explanation in rows:
+        point_cell = point.replace("|", "/").replace("\n", " ").strip()
+        explanation_cell = explanation.replace("|", "/").replace("\n", " ").strip()
+        lines.append(f"| {point_cell} | {explanation_cell} |")
+    lines.append("")
+
+
+def _append_comparison_tables_h1(lines: list[str], comparisons: Any) -> None:
+    lines.append("# Comparison")
+    lines.append("")
+    tables: list[dict[str, Any]] = []
+    if isinstance(comparisons, list):
+        tables = [t for t in comparisons if isinstance(t, dict)]
+    elif isinstance(comparisons, dict):
+        tables = [comparisons]
+
+    rendered_any = False
+    for table in tables:
+        headers = table.get("headers")
+        rows = table.get("rows") or []
+        if not isinstance(headers, list) or not headers:
+            continue
+        header_cells = [_as_text(h) or "—" for h in headers]
+        title = _as_text(table.get("title"))
+        lines.append(f"### {title}" if title else "### Comparison")
+        lines.append("| " + " | ".join(header_cells) + " |")
+        lines.append("|" + "|".join(["---"] * len(header_cells)) + "|")
+        for row in rows:
+            if isinstance(row, list):
+                cells = [_as_text(c) for c in row[: len(header_cells)]]
+                while len(cells) < len(header_cells):
+                    cells.append("")
+            elif isinstance(row, dict):
+                cells = [_as_text(row.get(h, "")) for h in headers]
+            else:
+                continue
+            lines.append("| " + " | ".join(c.replace("|", "/").replace("\n", " ") for c in cells) + " |")
+        lines.append("")
+        rendered_any = True
+
+    if not rendered_any:
+        lines.append("Not Applicable")
+        lines.append("")
+
+
+def _append_qa_h1(lines: list[str], title: str, value: Any) -> None:
+    lines.append(f"# {title}")
+    lines.append("")
+    pairs = _qa_pairs(value)
+    if not pairs:
+        lines.append("Not Applicable")
+        lines.append("")
+        return
+    for idx, (question, answer) in enumerate(pairs, start=1):
+        lines.append(f"### Q{idx}. {question}")
+        if answer:
+            lines.append(f"**Answer:** {answer}")
+        lines.append("")
+
+
+def render_sectioned_markdown(data: dict[str, Any]) -> str:
+    """Render the merged v30 sectioned-engine structured dict into ONE
+    long-form textbook-chapter markdown document (~2500-5000 words) covering
+    every required heading. Never omits a heading — "Not Applicable" instead."""
+    topic = _as_text(data.get("topic")) or "Study Topic"
+    subject = _as_text(data.get("subject"))
+    exam_priority = _as_text(data.get("exam_priority"))
+
+    lines: list[str] = [f"# {topic}", ""]
+    meta_bits = [f"**Subject:** {subject}" if subject else "", f"**Exam Priority:** {exam_priority}" if exam_priority else ""]
+    meta_bits = [b for b in meta_bits if b]
+    if meta_bits:
+        lines.append("  |  ".join(meta_bits))
+        lines.append("")
+
+    lines.append("# Definition")
+    lines.append("")
+    lines.append("### Simple")
+    lines.append(_na(data.get("definition_simple")))
+    lines.append("")
+    lines.append("### Technical")
+    lines.append(_na(data.get("definition_technical")))
+    lines.append("")
+    lines.append("### Exam-Ready")
+    lines.append(_na(data.get("definition_exam")))
+    lines.append("")
+
+    _append_section_h1(lines, "Introduction", data.get("introduction"))
+    _append_section_h1(lines, "Core Concept", data.get("core_concept"))
+    _append_section_h1(lines, "Working Principle", data.get("working_principle"))
+    _append_section_h1(lines, "Architecture / Components", data.get("architecture"))
+    _append_diagram_h1(lines, "Flow Diagram", data.get("diagram"))
+    _append_section_h1(lines, "Mathematical Formula", data.get("formula"))
+    _append_code_section_h1(lines, "Algorithm", data.get("algorithm"))
+
+    examples = _as_bullets(data.get("examples"))
+    lines.append("# Example")
+    lines.append("")
+    if examples:
+        for idx, example in enumerate(examples, start=1):
+            lines.append(f"**Example {idx}.** {example}")
+            lines.append("")
+    else:
+        lines.append("Not Applicable")
+        lines.append("")
+
+    _append_kv_table_h1(lines, "Advantages", data.get("advantages"))
+    _append_kv_table_h1(lines, "Disadvantages", data.get("disadvantages"))
+    _append_bullets_h1(lines, "Applications", data.get("applications"))
+    _append_comparison_tables_h1(lines, data.get("comparison"))
+    _append_section_h1(lines, "PYQ Perspective", data.get("pyq_perspective"))
+    _append_section_h1(lines, "2 Marks Answer", data.get("exam_answer_2m"))
+    _append_section_h1(lines, "5 Marks Answer", data.get("exam_answer_5m"))
+    _append_section_h1(lines, "10 Marks Answer", data.get("exam_answer_10m"))
+    _append_qa_h1(lines, "Viva Questions", data.get("viva"))
+    _append_qa_h1(lines, "Interview Questions", data.get("interview"))
+    _append_bullets_h1(lines, "Common Mistakes", data.get("common_mistakes"))
+    _append_bullets_h1(lines, "Memory Tricks", data.get("memory_tricks"))
+    _append_bullets_h1(lines, "Revision Notes", data.get("revision_points"))
+
+    lines.append("# Keywords")
+    lines.append("")
+    keywords = _as_bullets(data.get("keywords"))
+    lines.append(", ".join(keywords) if keywords else "Not Applicable")
+    lines.append("")
+
+    lines.append("# Summary")
+    lines.append("")
+    summary_text = _as_text(data.get("summary"))
+    if summary_text:
+        for line in summary_text.splitlines():
+            if line.strip():
+                lines.append(f"- {line.strip()}")
+    else:
+        lines.append("Not Applicable")
+    lines.append("")
+
+    return sanitize_note_text("\n".join(lines).strip())
+
+
 def is_exam_notes_result(data: dict[str, Any]) -> bool:
     if not data:
         return False
