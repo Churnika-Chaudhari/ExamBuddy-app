@@ -5,8 +5,19 @@ const path = require('path');
 
 const mobileDir = path.join(__dirname, '..');
 const sdk = path.join(process.env.LOCALAPPDATA || '', 'Android', 'Sdk');
-const gradleHome = process.env.GRADLE_USER_HOME || 'D:\\gradle';
-const tmpDir = process.env.TEMP || path.join(mobileDir, '.tmp');
+function isSandboxPath(p) {
+  return typeof p === 'string' && p.includes('cursor-sandbox');
+}
+const gradleHome =
+  process.env.GRADLE_USER_HOME && !isSandboxPath(process.env.GRADLE_USER_HOME)
+    ? process.env.GRADLE_USER_HOME
+    : 'D:\\gradle';
+const tmpDir = (() => {
+  for (const candidate of [process.env.TMP, process.env.TEMP, 'D:\\tmp']) {
+    if (candidate && !isSandboxPath(candidate)) return candidate;
+  }
+  return 'D:\\tmp';
+})();
 const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://10.167.199.44:8000/api/v1';
 const apiForce = process.env.EXPO_PUBLIC_API_FORCE === 'true';
 const buildVariant = process.env.APK_BUILD_VARIANT === 'release' ? 'release' : 'debug';
