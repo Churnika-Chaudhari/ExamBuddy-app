@@ -15,7 +15,7 @@ import logging
 from typing import Any
 
 from app.core.config import get_settings, reload_settings
-from app.core.exceptions import ExternalServiceError
+from app.core.exceptions import ExternalServiceError, describe_exception_chain
 from app.services.ai.base_provider import BaseAIProvider, GeminiProvider, OpenAIProvider
 from app.services.ai.provider_order import resolve_provider_order
 from app.services.ai.prompts import (
@@ -181,7 +181,12 @@ class LLMService:
             except Exception as exc:
                 logger.error("%s JSON generation failed: %s", name, exc)
                 last_exc = exc
-        raise ExternalServiceError("AI generation failed for all configured providers") from last_exc
+        # Preserve the real provider error (429/quota/etc.) in the message —
+        # a generic "failed for all providers" string hides the actual cause
+        # from both the rate-limit retry logic and the end user.
+        raise ExternalServiceError(
+            f"AI generation failed for all configured providers: {describe_exception_chain(last_exc)}"
+        ) from last_exc
 
     async def generate_notes_section_json(
         self,

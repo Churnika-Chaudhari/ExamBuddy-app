@@ -57,9 +57,7 @@ class GeminiAPIError(RuntimeError):
     @property
     def is_fatal(self) -> bool:
         # Auth errors fail identically on every model — no point burning seconds
-        # retrying. 429 quota errors are usually per-model/per-project-tier, so
-        # a different fallback model can genuinely succeed — let the caller's
-        # model loop try it instead of failing the whole request immediately.
+        # retrying.
         return self.status_code in (401, 403)
 
     @property
@@ -611,8 +609,14 @@ class GeminiProvider(BaseAIProvider):
     ) -> tuple[str, str]:
         last_exc: Exception | None = None
 
-        # Pass 1: REST for each model. Fail fast on quota/auth (retrying other
-        # models would hit the same wall and waste many seconds).
+        # Pass 1: REST for each model. Fail fast on auth AND on rate-limit —
+        # free-tier fallback models commonly have zero quota of their own
+        # (they 429 too), so cycling through FALLBACK_MODELS after a 429 just
+        # burns more requests into an already-exhausted per-minute window
+        # instead of giving a real chance of success. Raising immediately lets
+        # the caller (SectionedNotesPipeline's rate-limit retry) back off
+        # 55-70s and retry the PRIMARY model fresh — a much better use of
+        # time than an SDK pass that would hit the same wall.
         for model_name in self._models_to_try():
             try:
                 content = await self._rest_generate(
@@ -632,6 +636,13 @@ class GeminiProvider(BaseAIProvider):
                 last_exc = exc
                 if exc.is_fatal:
                     logger.warning("Gemini fatal error (%s) — skipping retries", exc.status_code)
+                    raise
+                if exc.is_rate_limited:
+                    logger.warning(
+                        "Gemini rate-limited (model=%s) — skipping remaining fallback models/SDK "
+                        "pass, deferring to caller backoff instead of burning more quota",
+                        model_name,
+                    )
                     raise
                 logger.warning("Gemini rest model %s failed: %s", model_name, exc)
             except Exception as exc:

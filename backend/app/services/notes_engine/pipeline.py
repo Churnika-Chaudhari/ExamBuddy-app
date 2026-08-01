@@ -13,7 +13,9 @@ Flow:
 Batch 1 ("topic_definition_intro") runs first and alone: it both gates
 UNKNOWN_TOPIC refusals and seeds a short context recap fed to every later
 batch so the document reads as one coherent chapter rather than 11 disjoint
-answers. Batches 2-11 then run concurrently (bounded) for speed.
+answers. Batches 2-11 then run with DEFAULT_SECTION_CONCURRENCY (1 by
+default, free-tier friendly) and a minimum inter-call spacing so the 11
+calls/topic stay under typical Gemini free-tier rate limits (~5 RPM).
 
 On any batch failing validation after its one repair attempt, the whole
 generation raises NotesSchemaError — there is no local template / fake-notes
@@ -24,9 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
+import time
 from typing import Any, Awaitable, Callable
 
+from app.core.exceptions import is_rate_limit_error, suggested_retry_delay_seconds
 from app.services.notes_engine.markdown_formatter import render_sectioned_markdown
 from app.services.notes_engine.prompt_builder import (
     build_context_recap,
@@ -60,32 +63,79 @@ GenerateSectionJsonFn = Callable[
     [str, str, dict[str, Any], int, float], Awaitable[tuple[dict[str, Any], dict[str, Any]]]
 ]
 
-# Bounded concurrency for batches 2-11 — fast without hammering the provider.
-DEFAULT_SECTION_CONCURRENCY = 3
+# Bounded concurrency for batches 2-11. Gemini FREE-TIER keys allow only
+# ~5 requests/minute — 11 section calls at any concurrency > 1 blows past
+# that almost immediately. Keep this at 1 (fully sequential) unless you know
+# your key has a paid-tier quota; see SECTION_CALL_MIN_SPACING_SECONDS below
+# for the actual pacing that keeps free-tier keys under quota.
+DEFAULT_SECTION_CONCURRENCY = 1
+
+# Minimum spacing enforced between the START of consecutive Gemini section
+# calls (across the whole pipeline run, regardless of concurrency). Gemini
+# free tier is ~5 requests/minute (12s/call); 14s of headroom keeps 11
+# sequential section calls (~2.5 min/topic) comfortably under that even
+# before any 429 backoff kicks in.
+SECTION_CALL_MIN_SPACING_SECONDS = 14.0
 
 # 11 focused calls per topic can trip a tight per-minute quota (esp. Gemini
 # free-tier keys). Retry with backoff on rate-limit errors instead of failing
 # the whole document — a transient 429 on one batch should not waste the 10
 # batches that already succeeded.
-_RATE_LIMIT_MAX_ATTEMPTS = 4
-_RATE_LIMIT_BACKOFF_SECONDS = (12.0, 20.0, 35.0)
-_RATE_LIMIT_PATTERN = re.compile(r"\b429\b|resource_exhausted|rate.?limit|quota", re.I)
-_RETRY_DELAY_PATTERN = re.compile(r"retry in\s*([\d.]+)\s*s", re.I)
+#
+# Free-tier 429s are per-minute-window errors, not instant-retry errors —
+# backing off 12-35s (the old values) routinely retries into the SAME
+# still-exhausted window. 55-70s comfortably clears a full RPM window before
+# retrying, and only 3 attempts are made (2 backoff waits) so a truly dead
+# key/quota still fails in a bounded time instead of hanging the request.
+_RATE_LIMIT_MAX_ATTEMPTS = 3
+_RATE_LIMIT_BACKOFF_SECONDS = (55.0, 70.0)
 
 
 def _is_rate_limit_error(exc: BaseException) -> bool:
-    return bool(_RATE_LIMIT_PATTERN.search(str(exc)))
+    # Checks exc AND its __cause__ chain — the real 429/quota text usually
+    # lives on the wrapped provider exception, not the outer generic
+    # "AI generation failed for all configured providers" message.
+    return is_rate_limit_error(exc)
 
 
 def _suggested_retry_delay(exc: BaseException, *, attempt: int) -> float:
-    match = _RETRY_DELAY_PATTERN.search(str(exc))
-    if match:
-        try:
-            return float(match.group(1)) + 1.0
-        except ValueError:
-            pass
+    delay = suggested_retry_delay_seconds(exc)
+    if delay is not None:
+        return delay + 1.0
     idx = min(attempt - 1, len(_RATE_LIMIT_BACKOFF_SECONDS) - 1)
     return _RATE_LIMIT_BACKOFF_SECONDS[idx]
+
+
+class _SectionCallPacer:
+    """
+    Enforces a minimum spacing between the start of consecutive Gemini
+    section calls, independent of the concurrency semaphore — a cheap,
+    dependency-free way to stay under a free-tier requests-per-minute quota
+    even if concurrency is ever raised above 1.
+    """
+
+    def __init__(self, min_spacing_seconds: float) -> None:
+        self._min_spacing = min_spacing_seconds
+        self._lock = asyncio.Lock()
+        self._last_call_at: float | None = None
+
+    async def wait_turn(self, *, section_id: str = "", topic: str = "") -> None:
+        async with self._lock:
+            now = time.monotonic()
+            if self._last_call_at is not None:
+                remaining = self._min_spacing - (now - self._last_call_at)
+                if remaining > 0:
+                    # Visible in Render logs so slow Stage-3 generations are
+                    # clearly explained (free-tier pacing), not mistaken for
+                    # a hang.
+                    logger.info(
+                        "notes_section pacing topic=%r section=%s waiting %.1fs before next Gemini call (free-tier RPM)",
+                        topic,
+                        section_id,
+                        remaining,
+                    )
+                    await asyncio.sleep(remaining)
+            self._last_call_at = time.monotonic()
 
 
 async def _call_with_rate_limit_retry(
@@ -98,10 +148,12 @@ async def _call_with_rate_limit_retry(
     *,
     section_id: str,
     topic: str,
+    pacer: _SectionCallPacer,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Call one section batch, retrying with backoff ONLY on rate-limit errors."""
     attempt = 1
     while True:
+        await pacer.wait_turn(section_id=section_id, topic=topic)
         try:
             return await generate_section_json(system_prompt, user_prompt, schema, max_tokens, temperature)
         except Exception as exc:
@@ -124,6 +176,7 @@ class SectionedNotesPipeline:
 
     def __init__(self, *, concurrency: int = DEFAULT_SECTION_CONCURRENCY) -> None:
         self.concurrency = max(1, concurrency)
+        self._pacer = _SectionCallPacer(SECTION_CALL_MIN_SPACING_SECONDS)
 
     async def _run_section(
         self,
@@ -166,6 +219,7 @@ class SectionedNotesPipeline:
                 temperature,
                 section_id=section_id,
                 topic=topic,
+                pacer=self._pacer,
             )
         except Exception as exc:
             trace.mark("section_generate_error", section=section_id, attempt=1, error=str(exc)[:200])
@@ -218,6 +272,7 @@ class SectionedNotesPipeline:
                 temperature,
                 section_id=section_id,
                 topic=topic,
+                pacer=self._pacer,
             )
             validate_section_payload(section_id, raw2)
             trace.mark("section_validate", section=section_id, ok=True, attempt=2, repaired=True)

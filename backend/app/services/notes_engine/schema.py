@@ -354,6 +354,19 @@ _SEC_COMPARISON_ARRAY = {"type": "ARRAY", "items": _SEC_COMPARISON_TABLE}
 
 # Ordered batches — NEVER collapse into one mega-call. Order matters: batch 1
 # seeds topic/definition context reused (as a short recap) by every later batch.
+#
+# Free-tier tradeoff note: 11 calls/topic paced at ~14s apart (see
+# notes_engine.pipeline.SECTION_CALL_MIN_SPACING_SECONDS) takes ~2.5-3+ min
+# per topic just for RPM pacing, before any 429 backoff. If a project's daily
+# free-tier RPD (requests-per-day) is the binding constraint rather than RPM,
+# merging adjacent batches (e.g. 11 -> 5-6, such as combining
+# architecture_diagram+formula_algorithm, or viva+interview into one call)
+# would cut total calls/topic roughly in half while keeping every structured
+# field and required heading intact. This was intentionally NOT done here:
+# the user wants a multi-call sectioned document (never one mega-call), and
+# pacing/backoff alone is sufficient for the common RPM-exhaustion failure
+# mode. Only reduce batch count if RPD, not RPM, turns out to be the actual
+# blocker in production logs.
 SECTION_ORDER: tuple[str, ...] = (
     "topic_definition_intro",
     "core_working",

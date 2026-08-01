@@ -3,7 +3,11 @@ import re
 from typing import Any
 
 from app.core.config import get_settings, reload_settings
-from app.core.exceptions import ExternalServiceError
+from app.core.exceptions import (
+    ExternalServiceError,
+    describe_exception_chain,
+    is_rate_limit_error,
+)
 from app.services.ai.base_provider import (
     GEMINI_MAX_NOTES_TOKENS,
     BaseAIProvider,
@@ -174,7 +178,9 @@ class AIService:
                 logger.error("%s JSON generation failed: %s", name, exc)
                 last_exc = exc
 
-        raise ExternalServiceError("AI generation failed for all configured providers") from last_exc
+        raise ExternalServiceError(
+            f"AI generation failed for all configured providers: {describe_exception_chain(last_exc)}"
+        ) from last_exc
 
     def _local_notes_result(
         self,
@@ -382,6 +388,15 @@ class AIService:
                     details=[{"reason": "UNKNOWN_TOPIC", "topic": topic}],
                 ) from exc
             if isinstance(exc, ExternalServiceError):
+                # The message now carries the real provider error text (see
+                # describe_exception_chain in llm_service) — re-surface it as
+                # a friendly quota/rate-limit hint instead of a bare re-raise
+                # of "all providers failed" when that's actually the cause.
+                if is_rate_limit_error(exc):
+                    raise ExternalServiceError(
+                        _friendly_ai_error(message),
+                        details=list(exc.details or []) or [{"reason": "RATE_LIMITED", "error": message[:400]}],
+                    ) from exc
                 raise
             logger.error("Exam notes pipeline failed topic=%s: %s", topic, exc)
             # Never return fake local-template notes — surface a real error.
