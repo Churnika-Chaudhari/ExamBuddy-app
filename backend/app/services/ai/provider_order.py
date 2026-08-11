@@ -23,6 +23,8 @@ def resolve_provider_order(settings: Any) -> list[str]:
     (e.g. AI_PROVIDER=openai but only GEMINI_API_KEY is set).
     """
     available: list[str] = []
+    if has_usable_api_key(getattr(settings, "groq_api_key", "")):
+        available.append("groq")
     if has_usable_api_key(getattr(settings, "gemini_api_key", "")):
         available.append("gemini")
     if has_usable_api_key(getattr(settings, "openai_api_key", "")):
@@ -30,7 +32,7 @@ def resolve_provider_order(settings: Any) -> list[str]:
     if not available:
         return []
 
-    preferred = getattr(settings, "ai_provider", None) or "gemini"
+    preferred = getattr(settings, "ai_provider", None) or "groq"
     if preferred in available:
         return [preferred, *[name for name in available if name != preferred]]
     return available

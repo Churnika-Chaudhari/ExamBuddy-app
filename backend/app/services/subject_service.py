@@ -5,7 +5,7 @@ from app.repositories.analysis_repository import AnalysisRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.subject_repository import SubjectRepository
 from app.services.mappers import map_document_response
-from app.utils.topic_analysis import topics_from_analysis_doc
+from app.services.quiz_service import _topics_from_analysis_doc
 from app.utils.subject_detector import normalize_subject_name, resolve_document_subject
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ class SubjectService:
             subject = normalize_subject_name(analysis.get("subject") or "")
             if not subject:
                 continue
-            topics = topics_from_analysis_doc(analysis)
+            topics = _topics_from_analysis_doc(analysis)
             if subject not in counts:
                 counts[subject] = {"pyq_count": 0, "topic_count": 0}
             counts[subject]["topic_count"] = max(
@@ -117,7 +117,7 @@ class SubjectService:
             if a_subject.lower() != subject_name.lower():
                 continue
             analysis_ids.append(str(analysis["_id"]))
-            for row in topics_from_analysis_doc(analysis):
+            for row in _topics_from_analysis_doc(analysis):
                 key = row["topic"].lower()
                 if key not in topic_map or row["frequency"] > topic_map[key]["frequency"]:
                     topic_map[key] = row

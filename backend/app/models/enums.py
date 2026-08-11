@@ -55,5 +55,6 @@ class QuizDifficulty(StrEnum):
 
 
 class AIProvider(StrEnum):
+    GROQ = "groq"
     OPENAI = "openai"
     GEMINI = "gemini"

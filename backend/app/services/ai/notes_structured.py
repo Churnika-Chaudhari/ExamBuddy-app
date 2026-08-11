@@ -12,51 +12,40 @@ STRUCTURED_NOTE_FIELDS = (
     "introduction",
     "whyUsed",
     "why_used",
-    "whyNeeded",
-    "why_needed",
+    "workingPrinciple",
+    "working_principle",
+    "working",
+    "architecture",
+    "types",
     "detailedExplanation",
     "detailed_explanation",
     "conceptualExplanation",
     "conceptual_explanation",
-    "working",
-    "workingPrinciple",
-    "working_principle",
-    "architecture",
-    "components",
-    "types",
-    "features",
-    "characteristics",
-    "flow",
-    "syntax",
-    "algorithm",
-    "formula",
-    "diagram",
+    "stepByStepWorking",
+    "step_by_step_working",
     "example",
-    "practicalExamples",
-    "practical_examples",
     "realWorldExample",
     "real_world_example",
+    "practicalExamples",
+    "practical_examples",
+    "diagram",
+    "formula",
     "advantages",
     "disadvantages",
     "applications",
     "comparison",
-    "keyPoints",
-    "key_points",
-    "keywords",
-    "examTips",
-    "examQuestions",
-    "exam_questions",
-    "universityQuestions",
-    "vivaQuestions",
-    "viva_questions",
-    "interviewQuestions",
-    "interview_questions",
     "commonMistakes",
     "common_mistakes",
+    "frequentlyAskedQuestions",
+    "interviewQuestions",
+    "vivaQuestions",
+    "keyPoints",
+    "key_points",
+    "examTips",
+    "keywords",
     "summary",
+    "components",
     "background",
-    "stepByStep",
-    "step_by_step",
 )
 
 
@@ -64,60 +53,24 @@ def is_structured_notes_result(data: dict[str, Any]) -> bool:
     """True when the AI returned section fields instead of a plain notes string."""
     if not data:
         return False
-    from app.services.notes_engine.markdown_formatter import is_exam_notes_result
-
-    if is_exam_notes_result(data):
-        return True
     if data.get("notes") and not any(data.get(f) for f in STRUCTURED_NOTE_FIELDS if f != "topic"):
         return False
     markers = (
         "definition",
         "introduction",
-        "detailedExplanation",
-        "detailed_explanation",
-        "conceptualExplanation",
-        "conceptual_explanation",
+        "whyUsed",
         "workingPrinciple",
         "working",
-        "components",
+        "detailedExplanation",
+        "conceptualExplanation",
+        "conceptual_explanation",
+        "stepByStepWorking",
         "advantages",
-        "examQuestions",
-        "vivaQuestions",
         "interviewQuestions",
+        "frequentlyAskedQuestions",
         "keyPoints",
-        "whyItMatters",
-        "importantExamPoints",
-        "thirtySecondRevision",
-        "whatIsIt",
-        "realLifeAnalogy",
-        "coreConcept",
-        "howItWorks",
-        "deepDive",
-        "revisionSheet",
-        "keyTakeaways",
-        "memoryTricks",
-        "mcqs",
-        "twoMarkAnswer",
-        "fiveMarkAnswer",
-        "tenMarkAnswer",
-        "revisionSummary",
-        "topicType",
-        "applications",
-        "keywords",
     )
     return any(data.get(key) for key in markers)
-
-
-def _first(*values: Any) -> Any:
-    for value in values:
-        if value is None:
-            continue
-        if isinstance(value, str) and not value.strip():
-            continue
-        if isinstance(value, (list, dict)) and not value:
-            continue
-        return value
-    return None
 
 
 def _as_text(value: Any) -> str:
@@ -157,7 +110,7 @@ def _as_bullets(value: Any) -> list[str]:
                 if text:
                     bullets.append(text)
             elif isinstance(item, dict):
-                name = _as_text(item.get("name") or item.get("title") or item.get("type"))
+                name = _as_text(item.get("name") or item.get("title") or item.get("type") or item.get("point"))
                 desc = _as_text(
                     item.get("description")
                     or item.get("detail")
@@ -218,13 +171,24 @@ def _append_qa_section(lines: list[str], title: str, content: Any) -> None:
         lines.append("")
 
 
+def _append_diagram(lines: list[str], diagram: Any) -> None:
+    text = _as_text(diagram)
+    if not text:
+        return
+    lines.append("## Diagram")
+    lines.append("```")
+    lines.append(text)
+    lines.append("```")
+    lines.append("")
+
+
 def _append_comparison(lines: list[str], comparison: Any) -> None:
     if not comparison:
         return
     if isinstance(comparison, str):
         text = comparison.strip()
         if text:
-            lines.extend(["## Comparison", text, ""])
+            lines.extend(["## Comparison Table", text, ""])
         return
     if not isinstance(comparison, dict):
         return
@@ -236,32 +200,31 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
         or comparison.get("topicB")
         or comparison.get("b")
     )
-    title = f"Comparison: {left} vs {right}" if left and right else "Comparison"
+    title = f"Comparison Table: {left} vs {right}" if left and right else "Comparison Table"
     lines.append(f"## {title}")
 
     table = comparison.get("table") or comparison.get("rows") or []
-    if isinstance(table, list) and table:
-        lines.append(f"| Aspect | {left or 'A'} | {right or 'B'} |")
-        lines.append("|---|---|---|")
+    if isinstance(table, list) and table and all(isinstance(row, dict) for row in table):
+        headers = ["Aspect", left or "Concept A", right or "Concept B"]
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("| --- | --- | --- |")
         for row in table:
-            if isinstance(row, dict):
-                aspect = _as_text(row.get("aspect") or row.get("feature") or row.get("point"))
-                left_val = _as_text(
-                    row.get("leftValue")
-                    or row.get("left")
-                    or row.get("a")
-                    or row.get("first")
-                )
-                right_val = _as_text(
-                    row.get("rightValue")
-                    or row.get("right")
-                    or row.get("b")
-                    or row.get("second")
-                )
-                if aspect:
-                    lines.append(f"| {aspect} | {left_val} | {right_val} |")
-            elif isinstance(row, str) and row.strip():
-                lines.append(f"| {row.strip()} |  |  |")
+            aspect = _as_text(row.get("aspect") or row.get("feature") or row.get("point"))
+            left_val = _as_text(
+                row.get("leftValue") or row.get("left") or row.get("a") or row.get("first")
+            )
+            right_val = _as_text(
+                row.get("rightValue") or row.get("right") or row.get("b") or row.get("second")
+            )
+            if aspect:
+                lines.append(f"| {aspect} | {left_val} | {right_val} |")
+    elif isinstance(table, list):
+        for row in table:
+            if isinstance(row, str) and row.strip():
+                lines.append(f"- {row.strip()}")
+            elif isinstance(row, list):
+                cells = [_as_text(c) for c in row]
+                lines.append("- " + " — ".join(c for c in cells if c))
     else:
         summary = _as_text(comparison.get("summary") or comparison.get("description"))
         if summary:
@@ -271,114 +234,71 @@ def _append_comparison(lines: list[str], comparison: Any) -> None:
 
 
 def structured_notes_to_markdown(data: dict[str, Any]) -> str:
-    """Render structured JSON into markdown (exam format preferred)."""
-    from app.services.notes_engine.markdown_formatter import (
-        format_exam_notes_markdown,
-        is_exam_notes_result,
-    )
-
-    if is_exam_notes_result(data) or data.get("whyItMatters") or data.get("importantExamPoints"):
-        return format_exam_notes_markdown(data)
-
+    """Render exam-ready structured JSON into the required Markdown outline."""
     topic = _as_text(data.get("topic") or data.get("title") or "Study Topic")
     lines: list[str] = [f"# {topic}", ""]
 
     _append_section(lines, "Definition", data.get("definition"))
     _append_section(lines, "Introduction", data.get("introduction") or data.get("background"))
+    _append_section(lines, "Why it is used", data.get("whyUsed") or data.get("why_used"))
     _append_section(
         lines,
-        "Why is it needed?",
-        _first(data.get("whyUsed"), data.get("why_used"), data.get("whyNeeded"), data.get("why_needed")),
+        "Working Principle",
+        data.get("workingPrinciple") or data.get("working_principle") or data.get("working"),
     )
     _append_section(
         lines,
-        "Detailed Explanation",
-        _first(
-            data.get("detailedExplanation"),
-            data.get("detailed_explanation"),
-            data.get("conceptualExplanation"),
-            data.get("conceptual_explanation"),
-        ),
+        "Architecture / Components",
+        data.get("architecture") or data.get("components"),
     )
-    _append_section(
-        lines,
-        "Working",
-        _first(
-            data.get("working"),
-            data.get("workingPrinciple"),
-            data.get("working_principle"),
-            data.get("stepByStep"),
-            data.get("step_by_step"),
-        ),
-    )
-
-    arch_text = _as_text(data.get("architecture"))
-    arch_bullets = _as_bullets(data.get("components"))
-    if arch_text or arch_bullets:
-        lines.append("## Architecture / Components")
-        if arch_text:
-            lines.append(arch_text)
-        lines.extend(f"- {b}" for b in arch_bullets)
-        lines.append("")
-
     _append_bullet_section(lines, "Types", data.get("types"))
-    _append_bullet_section(lines, "Features", data.get("features"))
-    _append_bullet_section(lines, "Characteristics", data.get("characteristics"))
-    _append_section(lines, "Flow", data.get("flow"))
-    _append_section(lines, "Syntax", data.get("syntax"))
-    _append_section(lines, "Algorithm", data.get("algorithm"))
-    _append_section(lines, "Formula", data.get("formula"))
-    _append_section(lines, "Diagram", data.get("diagram"))
+
+    detailed = _as_text(
+        data.get("detailedExplanation")
+        or data.get("detailed_explanation")
+        or data.get("conceptualExplanation")
+        or data.get("conceptual_explanation")
+    )
+    _append_section(lines, "Detailed Explanation", detailed)
+
     _append_section(
         lines,
-        "Example",
-        _first(
-            data.get("example"),
-            data.get("practicalExamples"),
-            data.get("practical_examples"),
-            data.get("realWorldExample"),
-            data.get("real_world_example"),
-        ),
+        "Step-by-step Working",
+        data.get("stepByStepWorking") or data.get("step_by_step_working"),
     )
+    _append_section(lines, "Example", data.get("example") or data.get("practicalExamples"))
+    _append_section(
+        lines,
+        "Real-world Example",
+        data.get("realWorldExample") or data.get("real_world_example"),
+    )
+    _append_diagram(lines, data.get("diagram"))
+    _append_section(lines, "Formula", data.get("formula"))
     _append_bullet_section(lines, "Advantages", data.get("advantages"))
     _append_bullet_section(lines, "Disadvantages", data.get("disadvantages"))
     _append_bullet_section(lines, "Applications", data.get("applications"))
     _append_comparison(lines, data.get("comparison"))
     _append_bullet_section(
         lines,
-        "Important Exam Points",
-        _first(
-            data.get("keyPoints"),
-            data.get("key_points"),
-            data.get("keywords"),
-            data.get("examTips"),
-            data.get("exam_tips"),
-        ),
+        "Common Mistakes",
+        data.get("commonMistakes") or data.get("common_mistakes"),
     )
     _append_qa_section(
         lines,
-        "Frequently Asked University Questions",
-        _first(
-            data.get("examQuestions"),
-            data.get("exam_questions"),
-            data.get("universityQuestions"),
-        ),
+        "Frequently Asked Exam Questions",
+        data.get("frequentlyAskedQuestions") or data.get("vivaQuestions"),
     )
     _append_qa_section(
         lines,
-        "Viva Questions",
-        _first(
-            data.get("vivaQuestions"),
-            data.get("viva_questions"),
-            data.get("interviewQuestions"),
-            data.get("interview_questions"),
-        ),
+        "Interview Questions",
+        data.get("interviewQuestions") or data.get("interview_questions"),
     )
     _append_bullet_section(
         lines,
-        "Common Mistakes",
-        _first(data.get("commonMistakes"), data.get("common_mistakes")),
+        "Key Points to Remember",
+        data.get("keyPoints") or data.get("key_points") or data.get("examTips"),
     )
+    _append_bullet_section(lines, "Keywords", data.get("keywords"))
     _append_section(lines, "Summary", data.get("summary"))
 
     markdown = sanitize_note_text("\n".join(lines).strip())

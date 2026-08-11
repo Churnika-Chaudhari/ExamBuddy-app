@@ -13,7 +13,6 @@ type Block =
   | { type: 'h4'; text: string }
   | { type: 'bullet'; text: string }
   | { type: 'code'; lines: string[] }
-  | { type: 'table'; headers: string[]; rows: string[][] }
   | { type: 'paragraph'; text: string };
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u200b-\u200d\ufeff]/g;
@@ -21,70 +20,66 @@ const DIAGRAM_LINE = /^[\s|+_\-=*/\\<>^v.~`#─━│┌┐└┘├┤┬┴┼
 const TABLE_SEPARATOR = /^\s*\|?[\s:|-]+\|[\s:|-]*$/;
 const ARROWS_RIGHT = /[→⇒⟶➡]/g;
 const ARROWS_LEFT = /[←⇐⟵]/g;
+const BOX_CHARS = /[─━│┌┐└┘├┤┬┴┼╔╗╚╝█▀▄▌▐░▒▓↑↓↕↔]/g;
 
 const METADATA_LINE =
   /^\s*(\[Source\s+\d+:|>\s*FROM\s+UPLOADED|FROM\s+UPLOADED\s+DOCUMENTS|RETRIEVED\s+CONTENT|Subject\s*(Code|No\.?)\s*:?\s*\d{4,6}\s*$)/i;
 
+const FILLER_LINE =
+  /^\s*(this topic is important|you should study|students should study|this is frequently asked|⭐\s*frequently asked|here are the notes)\b/i;
+
 /**
- * Strip metadata and control noise while preserving code fences, tables,
- * and ASCII diagrams so notes read like a textbook chapter.
+ * Light cleanup: drop metadata/filler, keep code fences, ASCII diagrams,
+ * and convert markdown tables into readable bullet rows.
  */
 function sanitizeContent(raw: string): string {
   if (!raw) return '';
   const text = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(CONTROL_CHARS, '');
   const out: string[] = [];
-  let inCode = false;
+  let inFence = false;
 
   for (const original of text.split('\n')) {
     let line = original.replace(/\s+$/, '');
     let stripped = line.trim();
 
-    if (stripped.startsWith('```') || stripped.startsWith('~~~')) {
-      inCode = !inCode;
-      out.push(stripped.slice(0, 3));
-      continue;
-    }
-
-    if (inCode) {
-      out.push(line);
-      continue;
-    }
-
     if (!stripped) {
       out.push('');
       continue;
     }
-    if (METADATA_LINE.test(stripped)) continue;
+    if (METADATA_LINE.test(stripped) || FILLER_LINE.test(stripped)) continue;
 
-    // Keep markdown tables intact (header/separator/rows) — parseMarkdown
-    // turns consecutive pipe-rows into a real table block below.
+    if (stripped.startsWith('```') || stripped.startsWith('~~~')) {
+      inFence = !inFence;
+      out.push('```');
+      continue;
+    }
+
+    if (inFence || (stripped.length >= 3 && DIAGRAM_LINE.test(stripped))) {
+      out.push(
+        line
+          .replace(ARROWS_RIGHT, '->')
+          .replace(ARROWS_LEFT, '<-')
+          .replace(/\s+$/, '')
+      );
+      continue;
+    }
+
+    if (stripped.includes('-') && TABLE_SEPARATOR.test(stripped)) continue;
+
     if (stripped.startsWith('|') && (stripped.match(/\|/g)?.length ?? 0) >= 2) {
-      out.push(line);
-      continue;
-    }
-    if (stripped.includes('-') && TABLE_SEPARATOR.test(stripped)) {
-      out.push(line);
-      continue;
-    }
-
-    // Keep ASCII diagram / flow lines as monospace code-ish paragraphs.
-    if (stripped.length >= 3 && DIAGRAM_LINE.test(stripped)) {
-      out.push('```');
-      out.push(line);
-      out.push('```');
-      continue;
-    }
-
-    // Drop AI instruction placeholders that leaked into content.
-    if (
-      /^(explain|provide|discuss|write|describe|cover|include)\s+(what|why|how|a|an|the|at\s+least|all|key|this)/i.test(
-        stripped
-      )
-    ) {
+      const cells = stripped
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((c) => c.trim())
+        .filter(Boolean);
+      if (!cells.length) continue;
+      out.push(`- ${cells.join(' — ')}`);
       continue;
     }
 
     line = line
+      .replace(/`+/g, '')
       .replace(ARROWS_RIGHT, '->')
       .replace(ARROWS_LEFT, '<-')
       .replace(/[ \t]{2,}/g, ' ')
@@ -93,22 +88,6 @@ function sanitizeContent(raw: string): string {
   }
 
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-function isTableRow(line: string): boolean {
-  return line.startsWith('|') && (line.match(/\|/g)?.length ?? 0) >= 2;
-}
-
-function isTableSeparatorRow(line: string): boolean {
-  return isTableRow(line) && /^\|?[\s:|-]+\|[\s:|-]*$/.test(line) && line.includes('-');
-}
-
-function splitTableRow(line: string): string[] {
-  return line
-    .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((cell) => cell.trim());
 }
 
 function parseMarkdown(content: string): Block[] {
@@ -150,20 +129,6 @@ function parseMarkdown(content: string): Block[] {
     const trimmed = line.trim();
     if (!trimmed) {
       i += 1;
-      continue;
-    }
-
-    if (isTableRow(trimmed) && i + 1 < lines.length && isTableSeparatorRow(lines[i + 1].trim())) {
-      flushCode();
-      const headers = splitTableRow(trimmed);
-      let j = i + 2;
-      const rows: string[][] = [];
-      while (j < lines.length && isTableRow(lines[j].trim())) {
-        rows.push(splitTableRow(lines[j].trim()));
-        j += 1;
-      }
-      blocks.push({ type: 'table', headers, rows });
-      i = j;
       continue;
     }
 
@@ -271,30 +236,6 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
                 <Text style={styles.bulletText}>{renderInline(block.text)}</Text>
               </View>
             );
-          case 'table':
-            return (
-              <View key={index} style={styles.table}>
-                <View style={[styles.tableRow, styles.tableHeaderRow]}>
-                  {block.headers.map((cell, ci) => (
-                    <View key={ci} style={styles.tableCell}>
-                      <Text style={styles.tableHeaderText}>{cell}</Text>
-                    </View>
-                  ))}
-                </View>
-                {block.rows.map((row, ri) => (
-                  <View
-                    key={ri}
-                    style={[styles.tableRow, ri % 2 === 1 ? styles.tableRowAlt : undefined]}
-                  >
-                    {row.map((cell, ci) => (
-                      <View key={ci} style={styles.tableCell}>
-                        <Text style={styles.tableCellText}>{renderInline(cell)}</Text>
-                      </View>
-                    ))}
-                  </View>
-                ))}
-              </View>
-            );
           default:
             return (
               <Text key={index} style={styles.paragraph}>
@@ -380,41 +321,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     color: colors.text,
-  },
-  table: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginVertical: spacing.xs,
-  },
-  tableRow: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  tableHeaderRow: {
-    backgroundColor: colors.surfaceAlt,
-    borderTopWidth: 0,
-  },
-  tableRowAlt: {
-    backgroundColor: colors.surfaceAlt,
-  },
-  tableCell: {
-    flex: 1,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs,
-    borderLeftWidth: 1,
-    borderLeftColor: colors.border,
-  },
-  tableHeaderText: {
-    ...typography.bodySmall,
-    fontWeight: '700',
-    color: colors.text,
-  },
-  tableCellText: {
-    ...typography.bodySmall,
-    color: colors.text,
-    lineHeight: 20,
   },
 });

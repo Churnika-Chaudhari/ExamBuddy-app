@@ -1,43 +1,52 @@
 """
-Centralized LLM orchestration — context trimming, call minimization.
+Centralized LLM orchestration — context trimming, call minimization, streaming.
 
 Performance goals:
 - Pass only small, topic-relevant snippets to the model
 - Skip redundant PYQ analysis LLM calls when local pipeline is sufficient
-- Small, focused structured-JSON calls per notes section batch (never one
-  mega-call per topic) — see app.services.notes_engine for the sectioned
-  Stage-3 notes pipeline that drives this.
+- Single structured JSON call per topic for notes (no nested queries)
+- Optional token streaming for progressive UI updates
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from app.core.config import get_settings, reload_settings
-from app.core.exceptions import ExternalServiceError, describe_exception_chain
-from app.services.ai.base_provider import BaseAIProvider, GeminiProvider, OpenAIProvider
+from app.core.exceptions import ExternalServiceError
+from app.services.ai.base_provider import (
+    GEMINI_MAX_NOTES_TOKENS,
+    BaseAIProvider,
+    GeminiProvider,
+    GroqProvider,
+    OpenAIProvider,
+)
 from app.services.ai.provider_order import resolve_provider_order
 from app.services.ai.prompts import (
     PROMPT_VERSION,
     PYQ_ANALYSIS_SYSTEM_PROMPT,
     PYQ_ANALYSIS_USER_PROMPT,
+    TOPIC_NOTES_SYSTEM_PROMPT,
+    TOPIC_NOTES_USER_PROMPT,
 )
-
 
 logger = logging.getLogger(__name__)
 
-# Tight context windows — large prompts are the main latency driver.
+# Context windows — enough PYQ signal without blowing latency.
 MAX_RAG_CONTEXT_CHARS = 12_000
-MAX_ANALYSIS_CONTEXT_CHARS = 2_000
+MAX_ANALYSIS_CONTEXT_CHARS = 2_500
 MAX_PIPELINE_CONTEXT_CHARS = 1_200
-MAX_PYQ_QUESTIONS_CHARS = 4_000
+MAX_PYQ_QUESTIONS_CHARS = 4_500
 MAX_PYQ_CONTENT_CHARS = 12_000
 MIN_LOCAL_TOPICS_FOR_SKIP = 2
 
-# Notes generation sampling — factual, structured, low hallucination.
+# Notes generation decoding defaults (applied at provider call sites).
 NOTES_TEMPERATURE = 0.35
 NOTES_TOP_P = 0.9
+NOTES_MAX_OUTPUT_TOKENS = GEMINI_MAX_NOTES_TOKENS
 
 
 def trim_context(text: str, limit: int) -> str:
@@ -47,8 +56,67 @@ def trim_context(text: str, limit: int) -> str:
     return text[:limit].rsplit("\n", 1)[0].strip() + "\n…"
 
 
+def extract_pyq_questions_for_topic(analysis: dict[str, Any] | None, topic: str) -> str:
+    """Pull PYQ question snippets related to a topic for notes grounding."""
+    if not analysis or not topic:
+        return ""
+    topic_l = topic.strip().lower()
+    tokens = [t for t in topic_l.replace("/", " ").replace("-", " ").split() if len(t) > 2]
+    collected: list[str] = []
+
+    def _maybe_add(text: str) -> None:
+        text = " ".join((text or "").split())
+        if not text or len(text) < 12:
+            return
+        lower = text.lower()
+        if topic_l in lower or (tokens and sum(1 for t in tokens if t in lower) >= max(1, len(tokens) // 2)):
+            if text not in collected:
+                collected.append(text[:280])
+
+    for key in (
+        "repeated_questions",
+        "predicted_questions",
+        "important_questions",
+        "sample_questions",
+        "questions",
+    ):
+        for item in analysis.get(key) or []:
+            if isinstance(item, str):
+                _maybe_add(item)
+            elif isinstance(item, dict):
+                _maybe_add(
+                    str(
+                        item.get("question")
+                        or item.get("text")
+                        or item.get("q")
+                        or item.get("stem")
+                        or ""
+                    )
+                )
+
+    # Fall back: unit / pattern hints tied to the topic row.
+    for row in analysis.get("topic_frequency_table") or []:
+        if str(row.get("topic", "")).lower() != topic_l:
+            continue
+        unit = row.get("unit")
+        if unit:
+            collected.append(f"Syllabus unit focus: {unit}")
+        break
+
+    if not collected:
+        # Last resort: include a few high-priority topic neighbors for angle hints.
+        for item in (analysis.get("high_priority_topics") or [])[:3]:
+            name = item if isinstance(item, str) else (item or {}).get("topic")
+            if name:
+                collected.append(f"Related high-priority topic: {name}")
+
+    if not collected:
+        return "No matching PYQ snippets found for this topic. Teach from syllabus-standard knowledge."
+    return trim_context("\n".join(f"- {q}" for q in collected[:12]), MAX_PYQ_QUESTIONS_CHARS)
+
+
 def compact_analysis_context(analysis: dict[str, Any]) -> str:
-    """Compact PYQ signals for notes — related topics only, no motivational labels."""
+    """Compact PYQ signals for notes prompt — topics + frequencies + patterns."""
     if not analysis:
         return ""
     parts: list[str] = []
@@ -58,59 +126,25 @@ def compact_analysis_context(analysis: dict[str, Any]) -> str:
 
     for row in (analysis.get("topic_frequency_table") or [])[:12]:
         topic = row.get("topic")
+        freq = row.get("frequency")
+        unit = row.get("unit")
         if topic:
-            parts.append(f"- Related syllabus topic: {topic}")
+            bit = f"- {topic}"
+            if freq:
+                bit += f" (freq {freq})"
+            if unit:
+                bit += f" [{unit}]"
+            parts.append(bit)
+
+    for item in (analysis.get("exam_patterns") or [])[:5]:
+        if isinstance(item, str) and item.strip():
+            parts.append(f"- Pattern: {item.strip()[:160]}")
+        elif isinstance(item, dict):
+            text = item.get("pattern") or item.get("description") or item.get("text")
+            if text:
+                parts.append(f"- Pattern: {str(text)[:160]}")
 
     return trim_context("\n".join(parts), MAX_ANALYSIS_CONTEXT_CHARS)
-
-
-def extract_pyq_questions_for_topic(analysis: dict[str, Any] | None, topic: str) -> str:
-    """Pull PYQ question snippets related to the topic for notes grounding."""
-    if not analysis or not topic:
-        return ""
-    topic_l = topic.strip().lower()
-    tokens = [t for t in topic_l.replace("-", " ").split() if len(t) > 2]
-    collected: list[str] = []
-
-    def _maybe_add(text: str) -> None:
-        cleaned = " ".join(text.split()).strip()
-        if not cleaned or len(cleaned) < 12:
-            return
-        lower = cleaned.lower()
-        if topic_l in lower or any(tok in lower for tok in tokens):
-            if cleaned not in collected:
-                collected.append(cleaned)
-
-    for item in analysis.get("repeated_questions") or []:
-        if isinstance(item, str):
-            _maybe_add(item)
-        elif isinstance(item, dict):
-            _maybe_add(str(item.get("question") or item.get("text") or item.get("q") or ""))
-
-    for key in ("important_questions", "sample_questions", "questions"):
-        for item in analysis.get(key) or []:
-            if isinstance(item, str):
-                _maybe_add(item)
-            elif isinstance(item, dict):
-                _maybe_add(str(item.get("question") or item.get("text") or ""))
-
-    # Fallback: pull question-like lines from analysis summary / raw excerpts.
-    for blob_key in ("question_bank", "extracted_questions", "content_excerpt"):
-        blob = analysis.get(blob_key)
-        if isinstance(blob, str):
-            for line in blob.splitlines():
-                if "?" in line or line.strip().lower().startswith(("explain", "define", "describe", "write", "compare", "differentiate")):
-                    _maybe_add(line)
-
-    if not collected:
-        return (
-            f"No direct PYQ question text matched for '{topic}'. "
-            "Generate complete syllabus notes suitable for typical university exam questions "
-            "(define / explain / compare / short notes)."
-        )
-
-    lines = [f"- {q}" for q in collected[:12]]
-    return trim_context("\n".join(lines), MAX_PYQ_QUESTIONS_CHARS)
 
 
 def should_skip_pyq_llm(local_topics: dict[str, Any] | None) -> bool:
@@ -133,6 +167,10 @@ class LLMService:
         self.ai_available = bool(self.providers)
 
     def _build_provider(self, provider_name: str) -> BaseAIProvider:
+        if provider_name == "groq":
+            if not self.settings.groq_api_key:
+                raise ExternalServiceError("Groq API key is not configured")
+            return GroqProvider(self.settings.groq_api_key, self.settings.groq_model)
         if provider_name == "gemini":
             if not self.settings.gemini_api_key:
                 raise ExternalServiceError("Gemini API key is not configured")
@@ -147,8 +185,6 @@ class LLMService:
                 self.providers.append((name, self._build_provider(name)))
             except ExternalServiceError as exc:
                 logger.warning("LLM provider %s unavailable: %s", name, exc.message)
-        if self.providers:
-            logger.info("LLM providers ready: %s", [name for name, _ in self.providers])
 
     async def _generate_json(
         self,
@@ -158,61 +194,146 @@ class LLMService:
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if not self.providers:
-            raise ExternalServiceError("Configure OpenAI or Gemini API key in backend .env")
+            raise ExternalServiceError("Configure Groq, OpenAI, or Gemini API key in backend .env")
 
         last_exc: Exception | None = None
         for name, provider in self.providers:
             try:
-                result, metadata = await provider.generate_json(
-                    system_prompt,
-                    user_prompt,
-                    max_output_tokens=max_output_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    response_schema=response_schema,
-                )
+                try:
+                    result, metadata = await provider.generate_json(
+                        system_prompt,
+                        user_prompt,
+                        max_output_tokens=max_output_tokens,
+                        temperature=temperature if temperature is not None else NOTES_TEMPERATURE,
+                        top_p=top_p if top_p is not None else NOTES_TOP_P,
+                    )
+                except TypeError:
+                    result, metadata = await provider.generate_json(
+                        system_prompt, user_prompt, max_output_tokens=max_output_tokens
+                    )
                 metadata["prompt_version"] = PROMPT_VERSION
-                if response_schema is not None:
-                    metadata["structured_json_mode"] = True
                 return result, metadata
             except Exception as exc:
                 logger.error("%s JSON generation failed: %s", name, exc)
                 last_exc = exc
-        # Preserve the real provider error (429/quota/etc.) in the message —
-        # a generic "failed for all providers" string hides the actual cause
-        # from both the rate-limit retry logic and the end user.
-        raise ExternalServiceError(
-            f"AI generation failed for all configured providers: {describe_exception_chain(last_exc)}"
-        ) from last_exc
+        raise ExternalServiceError("AI generation failed for all configured providers") from last_exc
 
-    async def generate_notes_section_json(
+    def build_topic_notes_prompts(
         self,
-        system_prompt: str,
-        user_prompt: str,
+        topic: str,
         *,
-        response_schema: dict[str, Any],
-        max_output_tokens: int,
-        temperature: float = NOTES_TEMPERATURE,
-        top_p: float = NOTES_TOP_P,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """
-        One focused structured-JSON call for a SINGLE Stage-3 notes section batch.
+        rag_context: str = "",
+        analysis_context: str = "",
+        subject: str | None = None,
+        pipeline_context: str = "",
+        exam_priority: str = "",
+        pyq_questions: str = "",
+    ) -> tuple[str, str]:
+        depth = (exam_priority or "").strip() or "Standard depth"
+        user_prompt = TOPIC_NOTES_USER_PROMPT.format(
+            topic=topic,
+            subject=subject or "General",
+            exam_priority=depth,
+            pyq_questions=trim_context(pyq_questions, MAX_PYQ_QUESTIONS_CHARS)
+            or "No matching PYQ snippets found for this topic. Teach from syllabus-standard knowledge.",
+            rag_context=trim_context(rag_context, MAX_RAG_CONTEXT_CHARS)
+            or "No reference snippets available — use standard syllabus knowledge.",
+            analysis_context=trim_context(analysis_context, MAX_ANALYSIS_CONTEXT_CHARS)
+            or "No PYQ analysis signals.",
+            pipeline_context=trim_context(pipeline_context, MAX_PIPELINE_CONTEXT_CHARS),
+        )
+        return TOPIC_NOTES_SYSTEM_PROMPT, user_prompt
 
-        The sectioned engine (app.services.notes_engine) issues ~11 of these per
-        topic — small compact schemas, never one mega-call — then merges the
-        results into one long-form markdown chapter.
-        """
+    async def generate_topic_notes_json(
+        self,
+        topic: str,
+        *,
+        rag_context: str = "",
+        analysis_context: str = "",
+        subject: str | None = None,
+        pipeline_context: str = "",
+        exam_priority: str = "",
+        pyq_questions: str = "",
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Single structured LLM call for topic notes."""
+        system_prompt, user_prompt = self.build_topic_notes_prompts(
+            topic,
+            rag_context=rag_context,
+            analysis_context=analysis_context,
+            subject=subject,
+            pipeline_context=pipeline_context,
+            exam_priority=exam_priority,
+            pyq_questions=pyq_questions,
+        )
         return await self._generate_json(
             system_prompt,
             user_prompt,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            response_schema=response_schema,
+            max_output_tokens=NOTES_MAX_OUTPUT_TOKENS,
+            temperature=NOTES_TEMPERATURE,
+            top_p=NOTES_TOP_P,
         )
+
+    async def stream_topic_notes_tokens(
+        self,
+        topic: str,
+        *,
+        rag_context: str = "",
+        analysis_context: str = "",
+        subject: str | None = None,
+        pipeline_context: str = "",
+        exam_priority: str = "",
+        pyq_questions: str = "",
+    ) -> AsyncIterator[str]:
+        """
+        Stream raw model tokens for progressive UI rendering.
+        Yields text fragments as they arrive from the provider.
+        """
+        if not self.providers:
+            raise ExternalServiceError("Configure Groq, OpenAI, or Gemini API key in backend .env")
+
+        system_prompt, user_prompt = self.build_topic_notes_prompts(
+            topic,
+            rag_context=rag_context,
+            analysis_context=analysis_context,
+            subject=subject,
+            pipeline_context=pipeline_context,
+            exam_priority=exam_priority,
+            pyq_questions=pyq_questions,
+        )
+
+        last_exc: Exception | None = None
+        for name, provider in self.providers:
+            stream_fn = getattr(provider, "stream_text", None)
+            if not callable(stream_fn):
+                continue
+            try:
+                async for token in stream_fn(
+                    system_prompt,
+                    user_prompt,
+                    max_output_tokens=NOTES_MAX_OUTPUT_TOKENS,
+                    temperature=NOTES_TEMPERATURE,
+                    top_p=NOTES_TOP_P,
+                ):
+                    if token:
+                        yield token
+                return
+            except TypeError:
+                # Older providers without decoding kwargs.
+                async for token in stream_fn(
+                    system_prompt,
+                    user_prompt,
+                    max_output_tokens=NOTES_MAX_OUTPUT_TOKENS,
+                ):
+                    if token:
+                        yield token
+                return
+            except Exception as exc:
+                logger.warning("%s stream failed: %s", name, exc)
+                last_exc = exc
+
+        raise ExternalServiceError("Streaming not available") from last_exc
 
     async def analyze_pyq_with_llm(
         self,
@@ -222,11 +343,6 @@ class LLMService:
         num_documents: int,
         extracted_topics_hint: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """
-        LEGACY: Single-prompt PYQ analysis.
-
-        Production path uses Stage 1+2 via run_topic_pipeline in AnalysisService.
-        """
         user_prompt = PYQ_ANALYSIS_USER_PROMPT.format(
             subject=subject or "General",
             num_documents=num_documents,

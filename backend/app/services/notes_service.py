@@ -14,22 +14,13 @@ from app.repositories.generated_notes_repository import (
 from app.repositories.notes_repository import NotesRepository
 from app.repositories.stats_repository import StatsRepository
 from app.services.ai.ai_service import AIService
-from app.services.ai.notes_sanitizer import is_placeholder_notes
+from app.services.llm_service import compact_analysis_context, extract_pyq_questions_for_topic
 from app.services.ai.prompts import PROMPT_VERSION
 from app.services.generated_note_mapper import map_generated_note
 from app.services.pipeline.notes_pipeline import NotesPipeline
-from app.services.pipeline.three_stage import (
-    PIPELINE_VERSION,
-    UNKNOWN_TOPIC,
-    build_stage3_notes_inputs,
-    lookup_stage2_topic,
-    normalize_single_topic,
-)
-from app.services.notes_engine.prompt_builder import normalize_exam_priority
-from app.services.notes_engine.schema import SECTIONED_ENGINE_ID
 from app.services.mappers import map_document_response
+from app.services.rag.retriever import DocumentRetriever
 from app.utils.pdf_generator import generate_note_pdf_bytes
-from app.utils.text_sanitizer import looks_like_corrupted_topic, sanitize_topic_name
 from app.utils.topic_extractor import filter_topics
 
 logger = logging.getLogger(__name__)
@@ -66,42 +57,11 @@ class NotesService:
         self.stats_repo = stats_repo
         self.generated_notes_repo = generated_notes_repo
         self.ai_service = ai_service or AIService()
+        self.rag_retriever = DocumentRetriever(document_repo)
         self.notes_pipeline = NotesPipeline()
 
     def _build_analysis_context(self, analysis: dict[str, Any]) -> str:
-        # Kept for compatibility; Stage 3 notes intentionally ignore analysis text.
-        _ = analysis
-        return ""
-
-    async def _normalize_topic_for_notes(
-        self,
-        topic: str,
-        *,
-        subject: str | None = None,
-        analysis_doc: dict[str, Any] | None = None,
-    ) -> str:
-        # Reuse Stage 2 mapping from completed analysis when available.
-        cached = lookup_stage2_topic(topic, analysis_doc)
-        if cached:
-            return cached
-
-        generate_json = None
-        if self.ai_service.ai_available:
-
-            async def _generate_json(system_prompt: str, user_prompt: str):
-                return await self.ai_service.llm_service._generate_json(
-                    system_prompt,
-                    user_prompt,
-                    temperature=0.1,
-                    top_p=0.9,
-                )
-
-            generate_json = _generate_json
-        return await normalize_single_topic(
-            topic,
-            subject=subject,
-            generate_json=generate_json,
-        )
+        return compact_analysis_context(analysis)
 
     async def generate_topic_note(
         self,
@@ -114,64 +74,25 @@ class NotesService:
         frequency: int | None = None,
         regenerate: bool = False,
     ) -> dict[str, Any]:
-        topic = sanitize_topic_name(topic)
+        topic = topic.strip()
         if not topic:
-            raise ValidationAppError(
-                "Topic name looks corrupted or empty (OCR/encoding garbage). "
-                "Re-upload a clearer PYQ PDF or pick a syllabus topic."
-            )
-        if looks_like_corrupted_topic(topic):
-            raise ValidationAppError(
-                f"Refusing to send corrupted topic to Gemini: {topic[:60]!r}"
-            )
+            raise ValidationAppError("Topic is required")
 
+        topic_key = normalize_topic_key(topic)
         analysis_doc: dict[str, Any] | None = None
+
         if analysis_id:
             analysis_doc = await self.analysis_repo.get_by_id_and_user(analysis_id, user_id)
             if not analysis_doc:
                 raise NotFoundError("Analysis not found")
-            subject = subject or analysis_doc.get("subject")
-
-        # Normalization layer: notes consume ONLY confident textbook topic names.
-        logger.info("Notes normalize start topic=%r subject=%r", topic, subject)
-        topic = await self._normalize_topic_for_notes(
-            topic,
-            subject=subject,
-            analysis_doc=analysis_doc,
-        )
-        topic = sanitize_topic_name(topic)
-        if not topic or topic.upper() == UNKNOWN_TOPIC or looks_like_corrupted_topic(topic):
-            raise ValidationAppError(
-                "UNKNOWN_TOPIC: cannot normalize this topic to a standard engineering "
-                "textbook name with confidence. Try a clearer syllabus topic."
-            )
-        logger.info("Notes normalize done topic=%r", topic)
-        topic_key = normalize_topic_key(topic)
 
         if not regenerate:
             cached = await self.generated_notes_repo.find_cached(
                 user_id, topic_key, analysis_id=analysis_id
             )
             if cached and cached.get("notes"):
-                cached_meta = cached.get("ai_metadata") or {}
-                cached_version = cached_meta.get("prompt_version")
-                cached_notes = str(cached.get("notes") or "")
-                # Allowlist (not a blacklist): only notes produced by the CURRENT
-                # sectioned engine are trusted from cache. Every prior engine id
-                # (v17/v18/v19/v20/v21 single-call JSON, or missing entirely) is
-                # treated as stale and regenerated through the new pipeline.
-                skip_cache = (
-                    cached_version != PROMPT_VERSION
-                    or cached_meta.get("notes_engine") != SECTIONED_ENGINE_ID
-                    or is_placeholder_notes(cached_notes)
-                    or cached_meta.get("provider") == "local"
-                    or cached_meta.get("generation_mode") == "local_fallback"
-                    or bool(cached_meta.get("generation_error") or cached_meta.get("ai_error"))
-                    or looks_like_corrupted_topic(cached.get("topic") or topic)
-                    or cached_meta.get("pipeline_version") != PIPELINE_VERSION
-                    or int(cached_meta.get("word_count") or 0) < 1500
-                )
-                if not skip_cache:
+                cached_version = (cached.get("ai_metadata") or {}).get("prompt_version")
+                if cached_version == PROMPT_VERSION:
                     logger.info("Returning cached notes for topic=%s", topic)
                     return map_generated_note(cached, cached=True)
 
@@ -184,26 +105,32 @@ class NotesService:
             user_id,
             topic,
             analysis_id=analysis_id,
-            subject=subject,
+            subject=subject or (analysis_doc.get("subject") if analysis_doc else None),
             frequency=frequency,
         )
         subject = ctx["subject"]
         frequency = ctx["frequency"]
+        rag_context = ctx["rag_context"]
+        rag_sources = ctx["rag_sources"]
 
         logger.info(
-            "Generating Stage-3 notes topic=%s user=%s regenerate=%s",
+            "Generating notes topic=%s user=%s rag_chunks=%d regenerate=%s",
             topic,
             user_id,
+            len(rag_sources),
             regenerate,
         )
 
         result, metadata = await self.ai_service.generate_topic_notes(
             topic,
+            rag_context=rag_context,
+            analysis_context=ctx["analysis_context"],
             subject=subject,
+            rag_sources=rag_sources,
+            pipeline_context=ctx["pipeline_context"],
             exam_priority=ctx["exam_priority"],
+            pyq_questions=ctx["pyq_questions"],
         )
-        metadata = dict(metadata or {})
-        metadata.setdefault("pipeline_version", PIPELINE_VERSION)
 
         notes_text = (result.get("notes") or result.get("content") or "").strip()
         if not notes_text:
@@ -228,7 +155,7 @@ class NotesService:
                 ),
                 "is_saved": preserve_saved,
                 "ai_metadata": metadata,
-                "rag_sources": [],
+                "rag_sources": rag_sources[:10],
                 "generated_at": datetime.now(UTC),
             }
         if result.get("structured"):
@@ -253,31 +180,52 @@ class NotesService:
         subject: str | None = None,
         frequency: int | None = None,
     ) -> dict[str, Any]:
-        """
-        Stage 3 context only: normalized topic + subject + frequency hint.
-
-        Never attaches raw PYQ / RAG text to notes generation.
-        """
-        _ = user_id
+        """Shared context gathering for generate + stream paths."""
+        analysis_context = ""
+        pyq_questions = ""
+        document_ids: list[str] = []
         analysis_doc: dict[str, Any] | None = None
+
         if analysis_id:
             analysis_doc = await self.analysis_repo.get_by_id_and_user(analysis_id, user_id)
             if not analysis_doc:
                 raise NotFoundError("Analysis not found")
+            analysis_context = self._build_analysis_context(analysis_doc)
+            pyq_questions = extract_pyq_questions_for_topic(analysis_doc, topic)
             subject = subject or analysis_doc.get("subject")
+            document_ids = [str(d) for d in analysis_doc.get("document_ids", [])]
+
+        rag_context, rag_sources = await self.rag_retriever.retrieve_for_topic(
+            user_id,
+            topic,
+            subject=subject,
+            analysis_document_ids=document_ids or None,
+        )
+
+        pipeline_context = ""
+        exam_priority = ""
+        if analysis_doc:
+            pipeline_context = self.notes_pipeline.build_notes_context(
+                topic, analysis_doc, frequency=frequency
+            )
             if not frequency:
                 for row in analysis_doc.get("topic_frequency_table") or []:
                     if str(row.get("topic", "")).lower() == topic.lower():
-                        frequency = int(row.get("frequency", 0) or 0)
+                        frequency = int(row.get("frequency", 0))
                         break
+            # Depth hint only — never printed in student-facing notes.
+            exam_priority = self.notes_pipeline.topic_frequency_label(frequency) or "Standard"
 
-        exam_priority = normalize_exam_priority("", frequency=frequency)
-        return build_stage3_notes_inputs(
-            topic=topic,
-            subject=subject,
-            frequency=frequency,
-            exam_priority=exam_priority,
-        )
+        return {
+            "analysis_context": analysis_context,
+            "pyq_questions": pyq_questions,
+            "rag_context": rag_context,
+            "rag_sources": rag_sources,
+            "pipeline_context": pipeline_context,
+            "exam_priority": exam_priority,
+            "subject": subject,
+            "frequency": frequency,
+        }
 
     async def stream_topic_note(
         self,
@@ -290,28 +238,10 @@ class NotesService:
         frequency: int | None = None,
     ):
         """Yield SSE-style JSON events with streamed note tokens."""
-        _ = unit
         topic = topic.strip()
         if not topic:
             raise ValidationAppError("Topic is required")
 
-        analysis_doc: dict[str, Any] | None = None
-        if analysis_id:
-            analysis_doc = await self.analysis_repo.get_by_id_and_user(analysis_id, user_id)
-            if not analysis_doc:
-                raise NotFoundError("Analysis not found")
-            subject = subject or analysis_doc.get("subject")
-
-        topic = await self._normalize_topic_for_notes(
-            topic,
-            subject=subject,
-            analysis_doc=analysis_doc,
-        )
-        if not topic or topic.upper() == UNKNOWN_TOPIC:
-            raise ValidationAppError(
-                "UNKNOWN_TOPIC: cannot normalize this topic to a standard engineering "
-                "textbook name with confidence. Try a clearer syllabus topic."
-            )
         ctx = await self._prepare_topic_generation(
             user_id,
             topic,
@@ -322,8 +252,12 @@ class NotesService:
 
         async for token in self.ai_service.stream_topic_notes(
             topic,
+            rag_context=ctx["rag_context"],
+            analysis_context=ctx["analysis_context"],
             subject=ctx["subject"],
+            pipeline_context=ctx["pipeline_context"],
             exam_priority=ctx["exam_priority"],
+            pyq_questions=ctx["pyq_questions"],
         ):
             yield token
 

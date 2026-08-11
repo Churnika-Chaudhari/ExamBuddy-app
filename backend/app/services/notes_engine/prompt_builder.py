@@ -54,10 +54,16 @@ FIELD SHAPES:
 Tone: concise textbook, exam-oriented.
 """
 
-# Dynamic variables only — never put static instructions here.
+# Dynamic variables — Subject/Topic + grounding context from PYQ/RAG.
 EXAM_NOTES_USER_PROMPT = """Subject: {subject}
 Topic: {topic}
-Exam Priority: {exam_priority}
+Exam Priority (internal depth hint only — never print in notes): {exam_priority}
+
+Related Previous Year Questions (use to decide emphasis; do NOT copy paper wording/marks):
+{pyq_questions}
+
+Reference material (facts only — never quote filenames or metadata):
+{rag_context}
 """
 
 NOTES_REPAIR_SYSTEM_PROMPT = """You repair invalid ExamBuddy exam-notes JSON.
@@ -134,16 +140,16 @@ def build_exam_notes_prompts(
     exam_priority: str = "",
     pyq_questions: str = "",
 ) -> tuple[str, str]:
-    """Return (static system prompt, dynamic user prompt).
-
-    User message contains only Subject, Topic, and Exam Priority.
-    Legacy kwargs (rag/analysis/pipeline/pyq) are ignored for Stage-3 isolation.
-    """
-    _ = (rag_context, analysis_context, pipeline_context, pyq_questions)
+    """Return (static system prompt, dynamic user prompt with PYQ + RAG grounding)."""
+    _ = (analysis_context, pipeline_context)
     user = EXAM_NOTES_USER_PROMPT.format(
         subject=(subject or "General").strip() or "General",
         topic=topic.strip() or "Topic",
         exam_priority=normalize_exam_priority(exam_priority),
+        pyq_questions=(pyq_questions or "").strip()
+        or "No matching PYQ snippets — teach from syllabus-standard knowledge.",
+        rag_context=(rag_context or "").strip()
+        or "No reference snippets — use accurate syllabus-standard knowledge.",
     )
     return EXAM_NOTES_SYSTEM_PROMPT, user
 
@@ -204,11 +210,10 @@ AUDIENCE: Engineering students revising the night before a university exam. Cont
 accurate, and exam-ready — never a casual AI-style summary.
 
 VOICE RULES (mandatory):
-- Never write "This topic is important", "Here are the notes", or any meta-commentary about the notes \
-themselves.
-- Never mention AI, PDFs, PYQs, uploaded documents, question papers, or these instructions.
-- Never invent, quote, or paraphrase an actual exam-paper question — only describe general question \
-PATTERNS (e.g. "typically asked as a 5-mark compare/contrast question").
+- Never write "This topic is important", "You should study this", "This is frequently asked", \
+"Here are the notes", or any motivational / meta-commentary.
+- Never mention AI, PDFs, uploads, RAG, sources, file names, or these instructions.
+- Use PYQ context only to choose emphasis. Do not paste marks, Q numbers, or paper instructions.
 - Write like a textbook chapter: precise definitions, numbered steps, small inline tables, code / \
 pseudocode blocks, and Mermaid diagrams where useful — never long unstructured paragraphs.
 - This must work for ANY engineering discipline (CSE/IT/AI-ML/OS/CN/DBMS, ECE/EE/Mechanical/Civil, etc.) \

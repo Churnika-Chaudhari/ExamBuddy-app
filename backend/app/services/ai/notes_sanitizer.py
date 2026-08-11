@@ -43,105 +43,25 @@ _BOILERPLATE_LINE = re.compile(
 )
 
 # Motivational / meta filler that must never reach students.
-_FILLER_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"this topic is important", re.I),
-    re.compile(r"this is (a )?high[- ]priority topic", re.I),
-    re.compile(r"frequently asked in exams?", re.I),
-    re.compile(r"often asked in exams?", re.I),
-    re.compile(r"you should study", re.I),
-    re.compile(r"students? (should|must|need to) (study|revise|remember|learn)", re.I),
-    re.compile(r"revise this carefully", re.I),
-    re.compile(r"make sure to (study|revise)", re.I),
-    re.compile(r"⭐\s*frequently asked", re.I),
-    re.compile(r"^\s*exam priority\b", re.I),
-    re.compile(r"according to (the )?uploaded", re.I),
-    re.compile(r"based on (the )?(uploaded|retrieved|provided) (material|document|content)", re.I),
-    re.compile(r"as an ai\b", re.I),
-    re.compile(r"i (am|have been) (an? )?(ai|language model)", re.I),
-)
-
-# Instruction / placeholder lines that look like prompt scaffolding, not notes.
-_INSTRUCTION_PLACEHOLDER_LINE = re.compile(
+_FILLER_LINE = re.compile(
     r"^\s*("
-    r"explain\s+(what|why|how|the|this|each|every|all|important)|"
-    r"provide\s+(a|an|at\s+least|one|the|detailed|complete|full)|"
-    r"discuss\s+(the|this|about|how|why)|"
-    r"write\s+(a|an|the|short|detailed|complete|about)|"
-    r"describe\s+(the|this|how|what|each)|"
-    r"cover\s+(key|the|all|important)|"
-    r"include\s+(all|one|at\s+least|a|an|code|syntax|example)|"
-    r"give\s+(at\s+least|a|an|one)\s+(one\s+)?(concrete|worked|real|example)|"
-    r"list\s+and\s+explain|"
-    r"break\s+into\s+subtopics|"
-    r"generate\s+(an?\s+)?(ascii|diagram|notes?)"
+    r"this topic is important|"
+    r"you should study|"
+    r"students should study|"
+    r"students must (study|remember)|"
+    r"this is frequently asked|"
+    r"frequently asked in exams|"
+    r"⭐\s*frequently asked|"
+    r"make sure to revise|"
+    r"here are the notes|"
+    r"in this note we will"
     r")\b",
     re.I,
 )
 
 
-# Prompt-schema echoes and raw JSON dumps that must never reach students.
-_SCHEMA_ECHO_MARKERS: tuple[str, ...] = (
-    "Simple explanation for a first-year student",
-    "Max ~200 words",
-    "Memorable analogy (traffic",
-    "Max 15 ultra-short bullets",
-    "Return ONLY valid JSON",
-    "Provide at least one concrete",
-    "Explain what **",
-    '"whatIsIt":',
-    '"whyNeeded":',
-    '"realLifeAnalogy":',
-    '"revisionSheet":',
-    '"twoMarkAnswer":',
-    '"revisionSummary":',
-    "Precise exam-ready definition",
-    "INTERNAL ONLY",
-)
-
-
-def looks_like_raw_notes_json(notes: str) -> bool:
-    """True when the body is mostly a JSON blob instead of lecture markdown."""
-    text = (notes or "").strip()
-    if not text:
-        return False
-    if text.startswith("{") or text.startswith("["):
-        return True
-    # Common when truncated JSON is pasted into the notes field.
-    if text.count('"whatIsIt"') + text.count('"definition"') >= 1 and text.count("{") >= 2:
-        return True
-    return False
-
-
-def is_placeholder_notes(notes: str) -> bool:
-    """True when notes look like prompt instructions instead of real study content."""
-    if not notes or len(notes.strip()) < 80:
-        return True
-    if looks_like_raw_notes_json(notes):
-        return True
-    lowered = notes
-    marker_hits = sum(1 for marker in _SCHEMA_ECHO_MARKERS if marker in lowered)
-    if marker_hits >= 2:
-        return True
-    if "Provide at least one concrete" in notes or "Explain what **" in notes:
-        return True
-    hits = 0
-    for line in notes.splitlines():
-        if _INSTRUCTION_PLACEHOLDER_LINE.match(line.strip()):
-            hits += 1
-            if hits >= 2:
-                return True
-    return False
-
-
-
 def sanitize_note_text(text: str) -> str:
-    """Remove metadata, filenames, filler, and exam-paper scaffolding from note text.
-
-    Preserves a single blank line between blocks (paragraphs / headings /
-    tables) — CommonMark markdown renderers require a blank line before a
-    table or list to parse it as its own block, so dropping all blank lines
-    (the old behaviour) silently corrupted table/heading rendering.
-    """
+    """Remove metadata, filenames, exam-paper scaffolding, and filler phrases."""
     if not text:
         return ""
 
@@ -149,24 +69,17 @@ def sanitize_note_text(text: str) -> str:
     out: list[str] = []
 
     for raw in text.split("\n"):
-        if not raw.strip():
-            if out and out[-1] != "":
-                out.append("")
-            continue
-
         line = _INLINE_STRIP.sub("", raw).strip()
         if not line:
             continue
 
         if any(p.search(line) for p in _DROP_LINE_PATTERNS):
             continue
-        if any(p.search(line) for p in _FILLER_LINE_PATTERNS):
-            continue
-        if _INSTRUCTION_PLACEHOLDER_LINE.match(line):
-            continue
         if _SUBJECT_CODE_LINE.match(line):
             continue
         if _BOILERPLATE_LINE.match(line):
+            continue
+        if _FILLER_LINE.search(line):
             continue
 
         line = _SUBJECT_CODE_PREFIX.sub("", line).strip()

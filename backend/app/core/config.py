@@ -42,12 +42,14 @@ class Settings(BaseSettings):
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
 
-    # AI — default Gemini (OpenAI optional). Prefer whichever key is actually set.
-    ai_provider: Literal["openai", "gemini"] = "gemini"
+    # AI — Groq / Gemini / OpenAI. Prefer whichever key is actually set.
+    ai_provider: Literal["groq", "openai", "gemini"] = "groq"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
 
     # Email (password reset)
     smtp_host: str = ""

@@ -7,14 +7,10 @@ question pattern cleanup → deduplication → normalized text.
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass
 
-from app.utils.text_sanitizer import clean_extracted_text
 from app.utils.watermark_filter import remove_watermarks_from_text
-
-logger = logging.getLogger("exambuddy.pipeline.preprocess")
 
 # Exam boilerplate — drop only when the line is purely administrative.
 _PURE_INSTRUCTION_LINE = re.compile(
@@ -165,13 +161,8 @@ def _is_question_candidate(line: str) -> bool:
 def preprocess_pyq_text(raw_text: str) -> PreprocessResult:
     """Full cleaning pass on extracted PYQ text."""
     original_len = len(raw_text or "")
-    text = clean_extracted_text(raw_text or "")
-    text = remove_watermarks_from_text(text)
+    text = remove_watermarks_from_text(raw_text or "")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    logger.info(
-        "Question extraction preprocess start chars=%d",
-        original_len,
-    )
 
     raw_lines = text.splitlines()
     cleaned_lines: list[str] = []
@@ -202,13 +193,6 @@ def preprocess_pyq_text(raw_text: str) -> PreprocessResult:
     question_lines = question_lines[:800]
     cleaned_text = "\n".join(cleaned_lines)
     cleaned_text = _MULTI_NEWLINE.sub("\n\n", cleaned_text).strip()
-
-    logger.info(
-        "Question extraction done questions=%d cleaned_chars=%d removed_lines=%d",
-        len(question_lines),
-        len(cleaned_text),
-        removed,
-    )
 
     stats = PreprocessStats(
         original_chars=original_len,

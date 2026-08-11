@@ -3,15 +3,12 @@ import re
 from typing import Any
 
 from app.core.config import get_settings, reload_settings
-from app.core.exceptions import (
-    ExternalServiceError,
-    describe_exception_chain,
-    is_rate_limit_error,
-)
+from app.core.exceptions import ExternalServiceError
 from app.services.ai.base_provider import (
     GEMINI_MAX_NOTES_TOKENS,
     BaseAIProvider,
     GeminiProvider,
+    GroqProvider,
     OpenAIProvider,
 )
 from app.services.ai.provider_order import resolve_provider_order
@@ -20,15 +17,9 @@ from app.services.ai.notes_sanitizer import sanitize_note_text
 from app.services.llm_service import LLMService, should_skip_pyq_llm
 from app.utils.topic_extractor import sanitize_analysis_result
 from app.services.ai.notes_structured import (
+    extract_structured_payload,
     is_structured_notes_result,
     structured_notes_to_markdown,
-)
-from app.services.notes_engine.validator import NotesSchemaError
-from app.services.pipeline.three_stage import (
-    run_stage3_notes,
-    run_stage4_quiz,
-    build_stage4_quiz_inputs,
-    stage3_generate_json_factory,
 )
 from app.services.ai.prompts import (
     NOTES_GENERATE_SYSTEM_PROMPT,
@@ -38,6 +29,10 @@ from app.services.ai.prompts import (
     PROMPT_VERSION,
     PYQ_ANALYSIS_SYSTEM_PROMPT,
     PYQ_ANALYSIS_USER_PROMPT,
+    QUIZ_GENERATE_SYSTEM_PROMPT,
+    QUIZ_GENERATE_USER_PROMPT,
+    TOPIC_NOTES_SYSTEM_PROMPT,
+    TOPIC_NOTES_USER_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,52 +46,42 @@ _TABLE_SEPARATOR = re.compile(r"^\s*\|?[\s:|\-]+\|[\s:|\-]*$")
 # Decorative symbols that look like junk in plain notes.
 _ARROWS_RIGHT = re.compile(r"[→⇒⟶➡]")
 _ARROWS_LEFT = re.compile(r"[←⇐⟵]")
-
-
-# Motivational filler detection lives in notes_sanitizer.is_placeholder_notes.
+_BOX_CHARS = re.compile(r"[─━│┌┐└┘├┤┬┴┼╔╗╚╝█▀▄▌▐░▒▓↑↓↕↔]")
 
 
 def clean_notes_markdown(text: str) -> str:
     """
-    Clean AI/markdown notes for display:
-    removes control/zero-width chars and document noise, while preserving
-    headings, bullets, code fences, tables, and useful diagram lines.
+    Light cleanup for exam notes: strip control chars and banned filler,
+    but preserve Markdown tables, code fences, and ASCII diagrams.
     """
     if not text:
         return ""
 
     text = _CONTROL_CHARS.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
+    text = sanitize_note_text(text)
 
     out: list[str] = []
-    in_code = False
+    in_fence = False
     for raw in text.split("\n"):
         line = raw.rstrip()
         stripped = line.strip()
 
         if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_code = not in_code
+            in_fence = not in_fence
             out.append(stripped[:3])
             continue
 
-        if in_code:
+        # Keep table / diagram content intact for the mobile renderer.
+        if in_fence or (stripped.startswith("|") and stripped.count("|") >= 2):
             out.append(line)
             continue
-
-        if not stripped:
-            out.append("")
-            continue
-
-        # Keep markdown tables intact for the renderer / PDF export.
-        if stripped.startswith("|") or (_TABLE_SEPARATOR.match(stripped) and "-" in stripped):
+        if "-" in stripped and _TABLE_SEPARATOR.match(stripped):
             out.append(line)
             continue
-
-        # Keep ASCII diagram / flow lines (monospace-friendly).
         if len(stripped) >= 3 and _DIAGRAM_LINE.match(stripped):
             out.append(line)
             continue
 
-        # Soft-normalize decorative arrows; keep readable content.
         line = _ARROWS_RIGHT.sub("->", line)
         line = _ARROWS_LEFT.sub("<-", line)
         line = re.sub(r"[ \t]{2,}", " ", line).rstrip()
@@ -110,15 +95,12 @@ def clean_notes_markdown(text: str) -> str:
 def _friendly_ai_error(message: str) -> str:
     lower = message.lower()
     if "429" in message or "quota" in lower:
-        return "Gemini API quota exceeded. Wait and try Regenerate, or check your Google AI billing/quota."
-    if "401" in message or "403" in message or "api key" in lower or "api_key" in lower:
-        return (
-            "Invalid or missing GEMINI_API_KEY. Set a valid Google AI Studio key "
-            "(usually starts with AIza…) in backend .env and on Render."
-        )
+        return "Gemini API quota exceeded. Notes generated from local template — retry later for AI notes."
+    if "401" in message or "403" in message or "api key" in lower:
+        return "Invalid or missing API key. Notes generated from local template."
     if "404" in message and "model" in lower:
-        return "Configured Gemini model is unavailable. Check GEMINI_MODEL in backend settings."
-    return f"AI notes generation failed: {message[:240]}"
+        return "AI model unavailable. Notes generated from local template."
+    return "AI generation failed. Notes generated from local template."
 
 
 class AIService:
@@ -131,6 +113,10 @@ class AIService:
         self.llm_service = LLMService()
 
     def _build_provider(self, provider_name: str) -> BaseAIProvider:
+        if provider_name == "groq":
+            if not self.settings.groq_api_key:
+                raise ExternalServiceError("Groq API key is not configured")
+            return GroqProvider(self.settings.groq_api_key, self.settings.groq_model)
         if provider_name == "gemini":
             if not self.settings.gemini_api_key:
                 raise ExternalServiceError("Gemini API key is not configured")
@@ -140,20 +126,13 @@ class AIService:
         return OpenAIProvider(self.settings.openai_api_key, self.settings.openai_model)
 
     def _load_providers(self) -> None:
-        order = resolve_provider_order(self.settings)
-        for name in order:
+        for name in resolve_provider_order(self.settings):
             try:
                 self.providers.append((name, self._build_provider(name)))
             except ExternalServiceError as exc:
                 logger.warning("AI provider %s unavailable: %s", name, exc.message)
 
-        if self.providers:
-            logger.info(
-                "AI providers ready: %s (preferred=%s)",
-                [name for name, _ in self.providers],
-                self.settings.ai_provider,
-            )
-        else:
+        if not self.providers:
             logger.warning("No AI provider configured — using local fallbacks where possible")
 
     async def _generate_json_with_fallback(
@@ -178,9 +157,7 @@ class AIService:
                 logger.error("%s JSON generation failed: %s", name, exc)
                 last_exc = exc
 
-        raise ExternalServiceError(
-            f"AI generation failed for all configured providers: {describe_exception_chain(last_exc)}"
-        ) from last_exc
+        raise ExternalServiceError("AI generation failed for all configured providers") from last_exc
 
     def _local_notes_result(
         self,
@@ -223,12 +200,6 @@ class AIService:
         num_documents: int = 1,
         local_topics: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """
-        LEGACY: Full PYQ analysis via a single LLM prompt.
-
-        Production analysis uses Stage 1+2 via run_topic_pipeline in AnalysisService.
-        Kept for scripts/tests and backward compatibility only.
-        """
         if not content.strip():
             raise ExternalServiceError("No text content to analyze")
 
@@ -278,7 +249,7 @@ class AIService:
                 logger.error("PYQ analysis AI failed, falling back to local: %s", exc)
 
         from app.services.pipeline.notes_pipeline import NotesPipeline
-        from app.services.pipeline.topic_consolidation import build_consolidated_analysis
+        from app.utils.topic_analysis import build_consolidated_analysis
 
         pipeline = NotesPipeline()
         if local_topics and local_topics.get("topic_table"):
@@ -298,112 +269,140 @@ class AIService:
         }
         return result, metadata
 
-    @staticmethod
-    def _usable_study_material(rag_context: str, *, limit: int = 1800) -> str:
-        """Turn retrieved snippets into readable teaching paragraphs (no instruction stubs)."""
-        if not rag_context or not rag_context.strip():
-            return ""
-        chunks: list[str] = []
-        for raw in re.split(r"\n\s*---\s*\n|\n{2,}", rag_context):
-            text = sanitize_note_text(raw).strip()
-            if len(text) < 40:
-                continue
-            if re.match(
-                r"^(explain|provide|discuss|write|describe|cover|include)\b",
-                text,
-                re.I,
-            ):
-                continue
-            chunks.append(text)
-            if sum(len(c) for c in chunks) >= limit:
-                break
-        if not chunks:
-            return ""
-        joined = "\n\n".join(chunks)
-        return joined[:limit].rstrip()
+    def _local_topic_notes(
+        self,
+        topic: str,
+        subject: str | None,
+        *,
+        rag_context: str = "",
+        analysis_context: str = "",
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        subject_label = subject or "Study"
+        retrieved_hint = ""
+        if rag_context.strip():
+            retrieved_hint = "\n\nUse syllabus-standard knowledge aligned with your uploaded materials.\n"
+
+        content = f"""# {topic}
+
+## Definition
+**{topic}** is a core concept in {subject_label}.{retrieved_hint}
+
+## Introduction
+Covers the purpose of **{topic}**, the problem it solves, and how it fits in the syllabus.
+
+## Why it is used
+- Practical need this concept addresses in real systems
+
+## Working Principle
+- Step through the underlying idea in plain language
+
+## Detailed Explanation
+Explain components, rules, variants, and related terms for **{topic}**.
+
+## Example
+Worked example: input -> process -> output for **{topic}**.
+
+## Advantages
+- Concrete benefit of using **{topic}**
+
+## Disadvantages
+- Concrete limitation or trade-off
+
+## Key Points to Remember
+- Formal definition
+- One worked example
+- One comparison with a related concept
+
+## Summary
+Definition, working, and one example for **{topic}**."""
+        meta: dict[str, Any] = {
+            "provider": "local",
+            "model": "rule-based",
+            "prompt_version": PROMPT_VERSION,
+            "rag_chunk_count": 1 if rag_context.strip() else 0,
+        }
+        return {
+            "notes": content,
+            "summary": f"Structured notes for {topic}. Configure AI keys for RAG-enhanced generation.",
+        }, meta
+
+    def _normalize_topic_result(self, result: dict[str, Any], *, topic: str = "") -> dict[str, Any]:
+        structured: dict[str, Any] | None = None
+
+        if is_structured_notes_result(result):
+            structured = extract_structured_payload(result)
+            if topic and not structured.get("topic"):
+                structured["topic"] = topic
+            notes = structured_notes_to_markdown(structured)
+            summary = clean_notes_markdown(str(structured.get("summary") or result.get("summary") or "")).strip()
+            return {
+                "notes": clean_notes_markdown(notes),
+                "summary": summary or None,
+                "structured": structured,
+            }
+
+        notes = (
+            result.get("notes")
+            or result.get("content")
+            or result.get("markdown")
+            or ""
+        )
+        if isinstance(notes, dict):
+            notes = str(notes)
+        notes = clean_notes_markdown(str(notes))
+        summary = clean_notes_markdown(str(result.get("summary") or "")).strip()
+        return {"notes": notes, "summary": summary or None, "structured": None}
 
     async def generate_topic_notes(
         self,
         topic: str,
         *,
-        subject: str | None = None,
-        exam_priority: str = "",
-        # Legacy kwargs — ignored by Stage 3 (isolation preserved for BC).
         rag_context: str = "",
         analysis_context: str = "",
+        subject: str | None = None,
         rag_sources: list[dict[str, Any]] | None = None,
         pipeline_context: str = "",
+        exam_priority: str = "",
         pyq_questions: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        _ = (rag_context, analysis_context, pipeline_context, pyq_questions)
-        logger.info(
-            "Stage3 notes request topic=%r subject=%r exam_priority=%s ai_available=%s",
-            topic,
-            subject,
-            exam_priority,
-            self.ai_available,
-        )
         if not self.ai_available:
-            raise ExternalServiceError(
-                "GEMINI_API_KEY is not configured. Add a valid key to backend .env "
-                "(and Render Environment) then restart the API.",
-                details=[{"reason": "AI_NOT_CONFIGURED"}],
-            )
-
-        try:
-            result, metadata = await run_stage3_notes(
-                topic=topic,
-                subject=subject,
-                exam_priority=exam_priority,
-                generate_section_json=stage3_generate_json_factory(self.llm_service),
-            )
-            result["notes"] = clean_notes_markdown(result.get("notes") or "")
-            if not result["notes"].strip():
-                raise ExternalServiceError(
-                    "Gemini returned empty notes content",
-                    details=[{"reason": "EMPTY_NOTES"}],
-                )
-            logger.info(
-                "Stage3 notes success topic=%r chars=%d word_count=%s provider=%s model=%s engine=%s",
-                topic,
-                len(result["notes"]),
-                metadata.get("word_count"),
-                metadata.get("provider"),
-                metadata.get("model"),
-                metadata.get("notes_engine"),
+            result, meta = self._local_topic_notes(
+                topic, subject, rag_context=rag_context, analysis_context=analysis_context
             )
             if rag_sources:
+                meta["rag_sources"] = rag_sources[:8]
+            return result, meta
+
+        try:
+            result, metadata = await self.llm_service.generate_topic_notes_json(
+                topic,
+                rag_context=rag_context,
+                analysis_context=analysis_context,
+                subject=subject,
+                pipeline_context=pipeline_context,
+                exam_priority=exam_priority,
+                pyq_questions=pyq_questions,
+            )
+            result = self._normalize_topic_result(result, topic=topic)
+            if rag_sources:
                 metadata["rag_sources"] = rag_sources[:8]
+                metadata["rag_chunk_count"] = len(rag_sources)
+            metadata["generation_mode"] = "rag" if rag_context.strip() else "ai_only"
+            if result.get("structured"):
+                metadata["structured_notes"] = result["structured"]
+            if not result.get("notes"):
+                raise ExternalServiceError("AI returned empty notes content")
             return result, metadata
-        except NotesSchemaError as exc:
-            raise ExternalServiceError(
-                "AI returned invalid notes JSON after repair",
-                details=list(exc.details or [{"reason": "NOTES_SCHEMA_INVALID"}]),
-            ) from exc
         except Exception as exc:
-            message = str(exc)
-            if "UNKNOWN_TOPIC" in message:
-                raise ExternalServiceError(
-                    f"Topic is too ambiguous for textbook notes: {topic}",
-                    details=[{"reason": "UNKNOWN_TOPIC", "topic": topic}],
-                ) from exc
-            if isinstance(exc, ExternalServiceError):
-                # The message now carries the real provider error text (see
-                # describe_exception_chain in llm_service) — re-surface it as
-                # a friendly quota/rate-limit hint instead of a bare re-raise
-                # of "all providers failed" when that's actually the cause.
-                if is_rate_limit_error(exc):
-                    raise ExternalServiceError(
-                        _friendly_ai_error(message),
-                        details=list(exc.details or []) or [{"reason": "RATE_LIMITED", "error": message[:400]}],
-                    ) from exc
-                raise
-            logger.error("Exam notes pipeline failed topic=%s: %s", topic, exc)
-            # Never return fake local-template notes — surface a real error.
-            raise ExternalServiceError(
-                _friendly_ai_error(message),
-                details=[{"reason": "GEMINI_NOTES_FAILED", "error": message[:400]}],
-            ) from exc
+            logger.error("Topic notes generation failed: %s", exc)
+            result, meta = self._local_topic_notes(
+                topic, subject, rag_context=rag_context, analysis_context=analysis_context
+            )
+            meta["generation_error"] = _friendly_ai_error(str(exc))
+            meta["ai_error"] = str(exc)
+            if rag_sources:
+                meta["rag_sources"] = rag_sources[:8]
+            return result, meta
 
     async def stream_topic_notes(
         self,
@@ -416,24 +415,17 @@ class AIService:
         exam_priority: str = "",
         pyq_questions: str = "",
     ):
-        """
-        Stream progressive markdown chunks for a topic.
-
-        The sectioned engine issues ~11 focused Gemini calls internally and only
-        produces a coherent document once ALL of them are merged and validated
-        (a partial document would fail the heading/word-count gate) — so this
-        yields the completed document split into per-heading chunks for a
-        progressive-render UX rather than raw token-by-token streaming.
-        """
-        _ = (rag_context, analysis_context, pipeline_context, pyq_questions)
-        result, _metadata = await self.generate_topic_notes(
-            topic, subject=subject, exam_priority=exam_priority
-        )
-        notes = result.get("notes") or ""
-        chunks = re.split(r"(?=\n# )", notes)
-        for chunk in chunks:
-            if chunk.strip():
-                yield chunk
+        """Stream LLM tokens for progressive notes rendering."""
+        async for token in self.llm_service.stream_topic_notes_tokens(
+            topic,
+            rag_context=rag_context,
+            analysis_context=analysis_context,
+            subject=subject,
+            pipeline_context=pipeline_context,
+            exam_priority=exam_priority,
+            pyq_questions=pyq_questions,
+        ):
+            yield token
 
     def _normalize_batch_notes_result(
         self,
@@ -615,25 +607,20 @@ class AIService:
                 subject=subject,
             )
 
-        inputs = build_stage4_quiz_inputs(
-            subject=subject or "General",
-            topics=topics,
-            content=content,
+        user_prompt = QUIZ_GENERATE_USER_PROMPT.format(
             num_questions=num_questions,
             quiz_type=quiz_type,
             difficulty=difficulty,
+            subject=subject or "General",
+            topics=", ".join(topics) if topics else "General",
+            content=content[:30000] or "No additional content.",
         )
-
-        async def _generate_json(system_prompt: str, user_prompt: str):
-            return await self.llm_service._generate_json(
-                system_prompt,
-                user_prompt,
-                temperature=0.3,
-                top_p=0.9,
-            )
-
         try:
-            return await run_stage4_quiz(inputs=inputs, generate_json=_generate_json)
+            result, metadata = await self._generate_json_with_fallback(
+                QUIZ_GENERATE_SYSTEM_PROMPT, user_prompt
+            )
+            metadata["difficulty"] = difficulty
+            return result, metadata
         except Exception as exc:
             logger.error("Quiz generation failed, using local template: %s", exc)
             result, meta = self._local_quiz_result(
@@ -644,5 +631,4 @@ class AIService:
                 subject=subject,
             )
             meta["generation_error"] = str(exc)
-            meta["generation_mode"] = "local_fallback"
             return result, meta

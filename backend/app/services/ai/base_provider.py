@@ -28,12 +28,7 @@ def _get_http_client() -> httpx.AsyncClient:
     global _shared_client
     if _shared_client is None or _shared_client.is_closed:
         _shared_client = httpx.AsyncClient(
-            # Structured exam-notes responses (large responseSchema +
-            # GEMINI_MAX_NOTES_TOKENS) routinely take 90-150s end-to-end.
-            # A 90s read timeout silently killed every real notes call
-            # (httpx.ReadTimeout stringifies to "") which then fell through
-            # to fallback models / local templates. 180s gives real headroom.
-            timeout=httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0),
+            timeout=httpx.Timeout(connect=15.0, read=90.0, write=30.0, pool=15.0),
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
     return _shared_client
@@ -56,24 +51,9 @@ class GeminiAPIError(RuntimeError):
 
     @property
     def is_fatal(self) -> bool:
-        # Auth errors fail identically on every model — no point burning seconds
-        # retrying.
-        return self.status_code in (401, 403)
-
-    @property
-    def is_rate_limited(self) -> bool:
-        return self.status_code == 429
-
-    @property
-    def retry_delay_seconds(self) -> float | None:
-        """Best-effort parse of Gemini's suggested retry delay from the error body."""
-        match = re.search(r"retry in\s*([\d.]+)\s*s", self.detail, re.I)
-        if match:
-            try:
-                return float(match.group(1))
-            except ValueError:
-                return None
-        return None
+        # Quota and auth errors will fail identically on every model, so there
+        # is no point burning seconds retrying — fail fast to the local fallback.
+        return self.status_code in (401, 403, 429)
 
 
 class BaseAIProvider(ABC):
@@ -86,7 +66,6 @@ class BaseAIProvider(ABC):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         pass
 
@@ -123,9 +102,18 @@ class BaseAIProvider(ABC):
 
 
 class OpenAIProvider(BaseAIProvider):
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(self, api_key: str, model: str, *, provider_name: str = "openai") -> None:
         self.api_key = api_key
         self.model = model
+        self.provider_name = provider_name
+        self.base_url: str | None = None
+
+    def _client(self):
+        from openai import AsyncOpenAI
+
+        if self.base_url:
+            return AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        return AsyncOpenAI(api_key=self.api_key)
 
     async def generate_json(
         self,
@@ -135,12 +123,8 @@ class OpenAIProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        from openai import AsyncOpenAI
-
-        _ = response_schema  # Gemini structured schema; OpenAI uses json_object mode.
-        client = AsyncOpenAI(api_key=self.api_key)
+        client = self._client()
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -148,7 +132,7 @@ class OpenAIProvider(BaseAIProvider):
                 {"role": "user", "content": user_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0.3 if temperature is None else temperature,
+            "temperature": 0.35 if temperature is None else temperature,
             "max_tokens": max_output_tokens,
         }
         if top_p is not None:
@@ -156,7 +140,7 @@ class OpenAIProvider(BaseAIProvider):
         response = await client.chat.completions.create(**kwargs)
         content = response.choices[0].message.content or "{}"
         metadata = {
-            "provider": "openai",
+            "provider": self.provider_name,
             "model": self.model,
             "tokens_used": response.usage.total_tokens if response.usage else None,
         }
@@ -171,9 +155,7 @@ class OpenAIProvider(BaseAIProvider):
         temperature: float | None = None,
         top_p: float | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=self.api_key)
+        client = self._client()
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -188,7 +170,7 @@ class OpenAIProvider(BaseAIProvider):
         response = await client.chat.completions.create(**kwargs)
         content = response.choices[0].message.content or ""
         metadata = {
-            "provider": "openai",
+            "provider": self.provider_name,
             "model": self.model,
             "tokens_used": response.usage.total_tokens if response.usage else None,
         }
@@ -203,16 +185,14 @@ class OpenAIProvider(BaseAIProvider):
         temperature: float | None = None,
         top_p: float | None = None,
     ):
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=self.api_key)
+        client = self._client()
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.3 if temperature is None else temperature,
+            "temperature": 0.35 if temperature is None else temperature,
             "max_tokens": max_output_tokens,
             "stream": True,
         }
@@ -223,6 +203,16 @@ class OpenAIProvider(BaseAIProvider):
             delta = chunk.choices[0].delta.content if chunk.choices else None
             if delta:
                 yield delta
+
+
+class GroqProvider(OpenAIProvider):
+    """Groq OpenAI-compatible Chat Completions API (gsk_ keys)."""
+
+    GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+    def __init__(self, api_key: str, model: str) -> None:
+        super().__init__(api_key, model, provider_name="groq")
+        self.base_url = self.GROQ_BASE_URL
 
 
 class GeminiProvider(BaseAIProvider):
@@ -256,8 +246,14 @@ class GeminiProvider(BaseAIProvider):
         return model_name.startswith("gemini-2.5")
 
     @staticmethod
-    def _extract_json_string_field(text: str, field: str) -> str | None:
-        match = re.search(rf'"{re.escape(field)}"\s*:\s*"', text)
+    def _salvage_notes_json(text: str) -> dict[str, Any] | None:
+        """
+        Recover the "notes" (and "summary") fields from a JSON blob that failed
+        to parse — usually because the model hit the output-token cap and the
+        string was cut off before the closing brace. Without this, truncated
+        responses surface to the user as raw `{"notes": "...` fragments.
+        """
+        match = re.search(r'"notes"\s*:\s*"', text)
         if not match:
             return None
 
@@ -275,139 +271,17 @@ class GeminiProvider(BaseAIProvider):
             chars.append(ch)
             i += 1
 
-        value = "".join(chars).strip()
-        return value or None
-
-    @staticmethod
-    def _extract_json_string_array(text: str, field: str, *, limit: int = 12) -> list[str] | None:
-        """Best-effort extract of a JSON string array field from truncated text."""
-        match = re.search(rf'"{re.escape(field)}"\s*:\s*\[', text)
-        if not match:
-            return None
-        i = match.end()
-        items: list[str] = []
-        while i < len(text) and len(items) < limit:
-            while i < len(text) and text[i] in " \t\r\n,":
-                i += 1
-            if i >= len(text) or text[i] == "]":
-                break
-            if text[i] != '"':
-                break
-            i += 1
-            escapes = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/"}
-            chars: list[str] = []
-            while i < len(text):
-                ch = text[i]
-                if ch == "\\" and i + 1 < len(text):
-                    chars.append(escapes.get(text[i + 1], text[i + 1]))
-                    i += 2
-                    continue
-                if ch == '"':
-                    i += 1
-                    break
-                chars.append(ch)
-                i += 1
-            value = "".join(chars).strip()
-            if value:
-                items.append(value)
-        return items or None
-
-    @staticmethod
-    def _salvage_notes_json(text: str) -> dict[str, Any] | None:
-        """
-        Recover useful fields from a JSON blob that failed to parse — usually
-        because the model hit the output-token cap mid-document.
-        """
-        structured_fields = (
-            # ExamBuddy v19
-            "topic",
-            "topicType",
-            "definition",
-            "introduction",
-            "detailedExplanation",
-            "working",
-            "diagram",
-            "example",
-            "architecture",
-            "syntax",
-            "codeExample",
-            "output",
-            "pseudocode",
-            "timeComplexity",
-            "spaceComplexity",
-            "twoMarkAnswer",
-            "fiveMarkAnswer",
-            "tenMarkAnswer",
-            # Legacy / Professor Alex
-            "whatIsIt",
-            "whyNeeded",
-            "realLifeAnalogy",
-            "coreConcept",
-            "howItWorks",
-            "realWorldExample",
-            "deepDive",
-            "whyUsed",
-            "whyItMatters",
-            "workingPrinciple",
-            "stepByStep",
-            "formula",
-            "algorithm",
-            "flow",
-            "summary",
-            "memoryTrick",
-        )
-        salvaged: dict[str, Any] = {}
-        for field in structured_fields:
-            value = GeminiProvider._extract_json_string_field(text, field)
-            if value:
-                salvaged[field] = value
-
-        for array_field in (
-            "keyConcepts",
-            "advantages",
-            "disadvantages",
-            "applications",
-            "commonMistakes",
-            "revisionSummary",
-            "keywords",
-            "formulae",
-            "characteristics",
-            "memoryTricks",
-            "revisionSheet",
-            "keyTakeaways",
-            "importantExamPoints",
-            "thirtySecondRevision",
-        ):
-            values = GeminiProvider._extract_json_string_array(text, array_field)
-            if values:
-                salvaged[array_field] = values
-
-        if (
-            salvaged.get("definition")
-            or salvaged.get("whatIsIt")
-            or salvaged.get("detailedExplanation")
-            or salvaged.get("deepDive")
-            or salvaged.get("working")
-            or salvaged.get("howItWorks")
-            or salvaged.get("twoMarkAnswer")
-        ):
-            return salvaged
-
-        notes = GeminiProvider._extract_json_string_field(text, "notes")
+        notes = "".join(chars).strip()
         if not notes:
-            return None
-        # Never treat raw JSON dumps as finished markdown notes.
-        stripped = notes.lstrip()
-        if stripped.startswith("{") or stripped.startswith("["):
-            nested = GeminiProvider._salvage_notes_json(notes)
-            if nested:
-                return nested
             return None
 
         result: dict[str, Any] = {"notes": notes}
-        summary = GeminiProvider._extract_json_string_field(text, "summary")
-        if summary:
-            result["summary"] = summary
+        summary_match = re.search(r'"summary"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if summary_match:
+            try:
+                result["summary"] = json.loads('"' + summary_match.group(1) + '"')
+            except json.JSONDecodeError:
+                pass
         return result
 
     @staticmethod
@@ -416,18 +290,14 @@ class GeminiProvider(BaseAIProvider):
         if not text:
             return {}
         try:
-            parsed = json.loads(text)
-            if isinstance(parsed, dict):
-                return parsed
+            return json.loads(text)
         except json.JSONDecodeError:
             pass
         fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
         if fence:
             inner = fence.group(1).strip()
             try:
-                parsed = json.loads(inner)
-                if isinstance(parsed, dict):
-                    return parsed
+                return json.loads(inner)
             except json.JSONDecodeError:
                 salvaged = GeminiProvider._salvage_notes_json(inner)
                 if salvaged:
@@ -435,13 +305,6 @@ class GeminiProvider(BaseAIProvider):
         salvaged = GeminiProvider._salvage_notes_json(text)
         if salvaged:
             return salvaged
-        # Last resort: if the model returned markdown notes instead of JSON.
-        if text.lstrip().startswith("#"):
-            return {"notes": text}
-        # Do not return raw JSON / schema text as "notes" — that recreates
-        # the placeholder-instruction bug for students.
-        if text.lstrip().startswith("{") or text.lstrip().startswith("["):
-            return {}
         return {"notes": text}
 
     @staticmethod
@@ -471,7 +334,6 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        response_schema: dict[str, Any] | None = None,
     ) -> str:
         url = f"{GEMINI_API_BASE}/models/{model_name}:generateContent"
         generation_config: dict[str, Any] = {
@@ -482,8 +344,6 @@ class GeminiProvider(BaseAIProvider):
             generation_config["topP"] = top_p
         if json_mode:
             generation_config["responseMimeType"] = "application/json"
-            if response_schema:
-                generation_config["responseSchema"] = response_schema
         if self._supports_thinking(model_name):
             generation_config["thinkingConfig"] = {"thinkingBudget": 0}
 
@@ -498,56 +358,14 @@ class GeminiProvider(BaseAIProvider):
             "x-goog-api-key": self.api_key,
         }
 
-        logger.info(
-            "Gemini request model=%s json_mode=%s schema=%s system_chars=%d user_chars=%d",
-            model_name,
-            json_mode,
-            bool(response_schema),
-            len(system_prompt or ""),
-            len(user_prompt or ""),
-        )
         client = _get_http_client()
         response = await client.post(url, headers=headers, json=body)
         if response.status_code >= 400:
-            # Some models reject responseSchema — retry once with MIME JSON only.
-            detail = response.text[:500]
-            logger.error(
-                "Gemini HTTP error model=%s status=%s detail=%s",
-                model_name,
-                response.status_code,
-                detail[:300],
-            )
-            if (
-                response_schema
-                and json_mode
-                and response.status_code == 400
-                and "schema" in detail.lower()
-            ):
-                logger.warning(
-                    "Gemini model %s rejected responseSchema — retrying JSON MIME only",
-                    model_name,
-                )
-                return await self._rest_generate(
-                    model_name,
-                    system_prompt,
-                    user_prompt,
-                    json_mode=True,
-                    max_output_tokens=max_output_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    response_schema=None,
-                )
-            raise GeminiAPIError(response.status_code, detail)
+            raise GeminiAPIError(response.status_code, response.text[:500])
         data = response.json()
         text = self._extract_text(data)
         if not text:
             raise RuntimeError("Gemini REST returned empty content")
-        logger.info(
-            "Gemini response model=%s chars=%d preview=%r",
-            model_name,
-            len(text),
-            (text[:160] + "…") if len(text) > 160 else text,
-        )
         return text
 
     async def _sdk_generate(
@@ -558,23 +376,16 @@ class GeminiProvider(BaseAIProvider):
         *,
         json_mode: bool,
         max_output_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-        response_schema: dict[str, Any] | None = None,
     ) -> str:
         import google.generativeai as genai
 
         genai.configure(api_key=self.api_key)
         generation_config: dict[str, Any] = {
-            "temperature": (0.3 if json_mode else 0.4) if temperature is None else temperature,
+            "temperature": 0.3 if json_mode else 0.4,
             "max_output_tokens": self._effective_max_tokens(model_name, max_output_tokens),
         }
-        if top_p is not None:
-            generation_config["top_p"] = top_p
         if json_mode:
             generation_config["response_mime_type"] = "application/json"
-            if response_schema:
-                generation_config["response_schema"] = response_schema
         if self._supports_thinking(model_name):
             generation_config["thinking_config"] = {"thinking_budget": 0}
 
@@ -585,9 +396,8 @@ class GeminiProvider(BaseAIProvider):
                 generation_config=generation_config,
             )
         except (TypeError, ValueError):
-            # Older SDK builds may not accept thinking_config / response_schema.
+            # Older SDK builds may not accept thinking_config — drop it and retry.
             generation_config.pop("thinking_config", None)
-            generation_config.pop("response_schema", None)
             model = genai.GenerativeModel(
                 model_name=model_name,
                 system_instruction=system_prompt,
@@ -605,18 +415,11 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         last_exc: Exception | None = None
 
-        # Pass 1: REST for each model. Fail fast on auth AND on rate-limit —
-        # free-tier fallback models commonly have zero quota of their own
-        # (they 429 too), so cycling through FALLBACK_MODELS after a 429 just
-        # burns more requests into an already-exhausted per-minute window
-        # instead of giving a real chance of success. Raising immediately lets
-        # the caller (SectionedNotesPipeline's rate-limit retry) back off
-        # 55-70s and retry the PRIMARY model fresh — a much better use of
-        # time than an SDK pass that would hit the same wall.
+        # Pass 1: REST for each model. Fail fast on quota/auth (retrying other
+        # models would hit the same wall and waste many seconds).
         for model_name in self._models_to_try():
             try:
                 content = await self._rest_generate(
@@ -627,7 +430,6 @@ class GeminiProvider(BaseAIProvider):
                     max_output_tokens=max_output_tokens,
                     temperature=temperature,
                     top_p=top_p,
-                    response_schema=response_schema if json_mode else None,
                 )
                 if content.strip():
                     logger.info("Gemini rest generation succeeded model=%s", model_name)
@@ -637,23 +439,9 @@ class GeminiProvider(BaseAIProvider):
                 if exc.is_fatal:
                     logger.warning("Gemini fatal error (%s) — skipping retries", exc.status_code)
                     raise
-                if exc.is_rate_limited:
-                    logger.warning(
-                        "Gemini rate-limited (model=%s) — skipping remaining fallback models/SDK "
-                        "pass, deferring to caller backoff instead of burning more quota",
-                        model_name,
-                    )
-                    raise
                 logger.warning("Gemini rest model %s failed: %s", model_name, exc)
             except Exception as exc:
-                # httpx timeouts (e.g. ReadTimeout) often stringify to "" —
-                # always include the exception type so timeouts are visible in logs.
-                logger.warning(
-                    "Gemini rest model %s failed: %s: %s",
-                    model_name,
-                    type(exc).__name__,
-                    exc or "(no message — likely a network timeout)",
-                )
+                logger.warning("Gemini rest model %s failed: %s", model_name, exc)
                 last_exc = exc
 
         # Pass 2: single SDK attempt with the primary model as a last resort
@@ -665,9 +453,6 @@ class GeminiProvider(BaseAIProvider):
                 user_prompt,
                 json_mode=json_mode,
                 max_output_tokens=max_output_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                response_schema=response_schema if json_mode else None,
             )
             if content.strip():
                 logger.info("Gemini sdk generation succeeded model=%s", self.model)
@@ -686,7 +471,6 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         content, model_name = await self._generate(
             system_prompt,
@@ -695,26 +479,12 @@ class GeminiProvider(BaseAIProvider):
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             top_p=top_p,
-            response_schema=response_schema,
         )
         parsed = self._parse_json_content(content)
-        if not parsed:
-            logger.error(
-                "Gemini JSON parse failed model=%s raw_preview=%r",
-                model_name,
-                (content[:240] + "…") if len(content) > 240 else content,
-            )
-            raise RuntimeError("Gemini returned non-JSON or unparseable content")
-        logger.info(
-            "Gemini JSON parse ok model=%s keys=%s",
-            model_name,
-            list(parsed.keys())[:20],
-        )
         metadata = {
             "provider": "gemini",
             "model": model_name,
             "tokens_used": None,
-            "structured_json_mode": bool(response_schema),
         }
         return parsed, metadata
 
@@ -755,7 +525,7 @@ class GeminiProvider(BaseAIProvider):
 
         genai.configure(api_key=self.api_key)
         generation_config: dict[str, Any] = {
-            "temperature": 0.3 if temperature is None else temperature,
+            "temperature": 0.35 if temperature is None else temperature,
             "max_output_tokens": self._effective_max_tokens(self.model, max_output_tokens),
             "response_mime_type": "application/json",
         }

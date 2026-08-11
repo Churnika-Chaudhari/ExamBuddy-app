@@ -13,10 +13,8 @@ from app.repositories.stats_repository import StatsRepository
 from app.services.ai.ai_service import AIService
 from app.services.mappers import map_document_response
 from app.services.subject_service import SubjectService
-from app.services.pipeline.three_stage import run_topic_pipeline
-from app.services.pipeline.three_stage.models import PIPELINE_VERSION
-from app.utils.topic_analysis import topics_from_analysis_doc
-from app.utils.topic_extractor import sanitize_analysis_result
+from app.services.pipeline.notes_pipeline import NotesPipeline
+from app.services.quiz_service import _topics_from_analysis_doc
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -36,6 +34,7 @@ class AnalysisService:
         self.stats_repo = stats_repo
         self.ai_service = ai_service or AIService()
         self.subject_service = subject_service
+        self.notes_pipeline = NotesPipeline()
 
     async def create_analysis(
         self,
@@ -87,8 +86,6 @@ class AnalysisService:
                 "syllabus_topics": [],
                 "exam_patterns": [],
                 "summary": None,
-                "stage1_topics": None,
-                "stage2_topics": None,
                 "ai_metadata": None,
                 "error_message": None,
                 "created_at": now,
@@ -122,32 +119,25 @@ class AnalysisService:
                 raise ValidationAppError("No extractable text found in selected documents")
 
             subject = documents[0].get("subject")
-
-            async def _generate_json(system_prompt: str, user_prompt: str):
-                return await self.ai_service.llm_service._generate_json(
-                    system_prompt,
-                    user_prompt,
-                    temperature=0.2,
-                    top_p=0.9,
-                )
-
-            generate_json = _generate_json if self.ai_service.ai_available else None
-            pipeline = await run_topic_pipeline(
+            pipeline_result = await self.notes_pipeline.run_async(
                 combined_text,
                 subject=subject,
                 num_documents=len(documents),
-                generate_json=generate_json,
             )
-            result = sanitize_analysis_result(pipeline.analysis_payload)
-            metadata = {
-                "provider": (pipeline.metadata.get("stage2") or {}).get("provider")
-                or (pipeline.metadata.get("stage1") or {}).get("provider")
-                or "local",
-                "model": PIPELINE_VERSION,
-                "tokens_used": None,
-                "pipeline_version": PIPELINE_VERSION,
-                "notes_prompt_version": pipeline.metadata.get("notes_prompt_version"),
-                **pipeline.metadata,
+            cleaned_text = pipeline_result.cleaned_text
+            local_analysis = pipeline_result.topic_analysis
+
+            result, metadata = await self.ai_service.analyze_pyq(
+                cleaned_text,
+                subject,
+                num_documents=len(documents),
+                local_topics=local_analysis,
+            )
+            result = self.notes_pipeline.merge_ai_analysis(local_analysis, result)
+            metadata["pipeline"] = {
+                "lines_removed": pipeline_result.preprocess_stats.lines_removed,
+                "questions_parsed": len(pipeline_result.question_lines),
+                "topics_extracted": len(result.get("topic_table") or []),
             }
 
             await self.analysis_repo.update(
@@ -171,8 +161,6 @@ class AnalysisService:
                     "syllabus_topics": result.get("syllabus_topics", []),
                     "exam_patterns": result.get("exam_patterns", []),
                     "summary": result.get("summary"),
-                    "stage1_topics": result.get("stage1_topics"),
-                    "stage2_topics": result.get("stage2_topics"),
                     "ai_metadata": metadata,
                     "error_message": None,
                     "completed_at": datetime.now(UTC),
@@ -188,7 +176,7 @@ class AnalysisService:
                 },
             )
             if self.subject_service and subject:
-                topic_count = len(topics_from_analysis_doc(result))
+                topic_count = len(_topics_from_analysis_doc(result))
                 await self.subject_service.on_analysis_completed(user_id, subject, topic_count)
         except Exception as exc:
             logger.error("Analysis failed for %s: %s", analysis_id, exc)
