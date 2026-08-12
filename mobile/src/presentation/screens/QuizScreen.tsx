@@ -187,14 +187,14 @@ export default function QuizScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Quiz Generator</Text>
         <Text style={styles.subtitle}>
-          Subjects are loaded automatically from your uploaded PYQ papers
+          Subjects are loaded from your analyzed PYQs and generated notes
         </Text>
       </View>
 
       <AppCard style={styles.configCard}>
-        <Text style={styles.fieldLabel}>Subject</Text>
+        <Text style={styles.fieldLabel}>Select Subject</Text>
         {subjects.length === 0 ? (
-          <Text style={styles.noSubjects}>No subjects yet — upload and analyze PYQ papers first</Text>
+          <Text style={styles.noSubjects}>No subjects yet — upload & analyze PYQs or generate notes first</Text>
         ) : (
           <ScrollView
             horizontal

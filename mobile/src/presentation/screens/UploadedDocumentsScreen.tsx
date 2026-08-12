@@ -30,6 +30,7 @@ const STATUS_META: Record<
 const CATEGORY_LABEL: Record<Document['category'], string> = {
   pyq: 'PYQ',
   notes: 'Notes',
+  syllabus: 'Syllabus',
   study_material: 'Study Material',
   other: 'Document',
 };
@@ -62,7 +63,7 @@ export default function UploadedDocumentsScreen() {
     if (!documents.length || clearing) return;
     Alert.alert(
       'Clear all documents?',
-      'This permanently deletes all your uploaded documents (PYQs and notes). This cannot be undone.',
+      'This permanently deletes all your uploaded documents (PYQs, notes, and syllabi). This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -184,7 +185,7 @@ export default function UploadedDocumentsScreen() {
           <EmptyState
             icon="document-outline"
             title="No documents yet"
-            subtitle="Upload PYQs or notes to power your AI study notes"
+            subtitle="Upload PYQs, notes, or syllabi to power analysis and quizzes"
           />
         }
       />

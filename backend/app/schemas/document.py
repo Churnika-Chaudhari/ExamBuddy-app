@@ -29,6 +29,7 @@ class DocumentResponse(BaseSchema):
     file_size_bytes: int | None = None
     page_count: int | None = None
     extracted_text: str | None = None
+    syllabus_structure: dict | None = None
     status: ProcessingStatus
     error_message: str | None = None
     tags: list[str] = []

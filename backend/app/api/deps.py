@@ -73,12 +73,19 @@ def get_subject_repo(db: Annotated[AsyncIOMotorDatabase, Depends(get_db)]) -> Su
     return SubjectRepository(db)
 
 
+def get_generated_notes_repo(
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_db)],
+) -> GeneratedNotesRepository:
+    return GeneratedNotesRepository(db)
+
+
 def get_subject_service(
     subject_repo: Annotated[SubjectRepository, Depends(get_subject_repo)],
     document_repo: Annotated[DocumentRepository, Depends(get_document_repo)],
     analysis_repo: Annotated[AnalysisRepository, Depends(get_analysis_repo)],
+    generated_notes_repo: Annotated[GeneratedNotesRepository, Depends(get_generated_notes_repo)],
 ) -> SubjectService:
-    return SubjectService(subject_repo, document_repo, analysis_repo)
+    return SubjectService(subject_repo, document_repo, analysis_repo, generated_notes_repo)
 
 
 def get_document_service(
@@ -98,12 +105,6 @@ def get_analysis_service(
     subject_service: Annotated[SubjectService, Depends(get_subject_service)],
 ) -> AnalysisService:
     return AnalysisService(analysis_repo, document_repo, stats_repo, ai_service, subject_service)
-
-
-def get_generated_notes_repo(
-    db: Annotated[AsyncIOMotorDatabase, Depends(get_db)],
-) -> GeneratedNotesRepository:
-    return GeneratedNotesRepository(db)
 
 
 def get_notes_service(

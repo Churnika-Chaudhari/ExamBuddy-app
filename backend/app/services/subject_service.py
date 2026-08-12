@@ -3,6 +3,7 @@ from typing import Any
 
 from app.repositories.analysis_repository import AnalysisRepository
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.generated_notes_repository import GeneratedNotesRepository
 from app.repositories.subject_repository import SubjectRepository
 from app.services.mappers import map_document_response
 from app.services.quiz_service import _topics_from_analysis_doc
@@ -17,10 +18,12 @@ class SubjectService:
         subject_repo: SubjectRepository,
         document_repo: DocumentRepository,
         analysis_repo: AnalysisRepository,
+        generated_notes_repo: GeneratedNotesRepository | None = None,
     ) -> None:
         self.subject_repo = subject_repo
         self.document_repo = document_repo
         self.analysis_repo = analysis_repo
+        self.generated_notes_repo = generated_notes_repo
 
     def _map_subject(self, doc: dict[str, Any]) -> dict[str, Any]:
         mapped = map_document_response(doc)
@@ -34,7 +37,7 @@ class SubjectService:
         }
 
     async def sync_all_for_user(self, user_id: str) -> None:
-        """Rebuild subject counts from uploaded PYQs and completed analyses."""
+        """Rebuild subject counts from PYQs, completed analyses, and generated notes."""
         counts: dict[str, dict[str, int]] = {}
 
         docs = await self.document_repo.list_by_user(
@@ -53,6 +56,22 @@ class SubjectService:
                 counts[key] = {"pyq_count": 0, "topic_count": 0}
             counts[key]["pyq_count"] += 1
 
+        # Uploaded notes with a subject also surface in the quiz subject list.
+        notes_docs = await self.document_repo.list_by_user(
+            user_id, skip=0, limit=500, category="notes"
+        )
+        for doc in notes_docs:
+            subject = resolve_document_subject(
+                explicit_subject=doc.get("subject"),
+                filename=doc.get("title"),
+                title=doc.get("title"),
+            )
+            if not subject:
+                continue
+            key = normalize_subject_name(subject)
+            if key not in counts:
+                counts[key] = {"pyq_count": 0, "topic_count": 0}
+
         analyses = await self.analysis_repo.list_by_user(user_id, limit=200)
         for analysis in analyses:
             if analysis.get("status") != "completed":
@@ -66,6 +85,21 @@ class SubjectService:
             counts[subject]["topic_count"] = max(
                 counts[subject]["topic_count"], len(topics)
             )
+
+        # Generated notes subjects (topic/batch notes) also appear dynamically.
+        if self.generated_notes_repo:
+            try:
+                generated = await self.generated_notes_repo.list_by_user(
+                    user_id, skip=0, limit=500
+                )
+                for note in generated:
+                    subject = normalize_subject_name(note.get("subject") or "")
+                    if not subject:
+                        continue
+                    if subject not in counts:
+                        counts[subject] = {"pyq_count": 0, "topic_count": 0}
+            except Exception as exc:
+                logger.warning("Could not sync subjects from generated notes: %s", exc)
 
         for name, data in counts.items():
             await self.subject_repo.upsert(
@@ -142,7 +176,7 @@ class SubjectService:
 
         docs = await self.document_repo.list_by_user(user_id, skip=0, limit=300)
         source_documents: list[dict[str, Any]] = []
-        counts = {"pyq": 0, "notes": 0, "study_material": 0, "other": 0}
+        counts = {"pyq": 0, "notes": 0, "syllabus": 0, "study_material": 0, "other": 0}
 
         for doc in docs:
             resolved = resolve_document_subject(
@@ -173,6 +207,7 @@ class SubjectService:
             "source_documents": source_documents,
             "pyq_count": counts.get("pyq", 0),
             "notes_count": counts.get("notes", 0),
+            "syllabus_count": counts.get("syllabus", 0),
             "study_material_count": counts.get("study_material", 0),
             "total_sources": len(source_documents),
         }

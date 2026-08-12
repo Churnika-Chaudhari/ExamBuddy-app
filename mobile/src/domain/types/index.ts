@@ -26,7 +26,7 @@ export interface Document {
   user_id: string;
   title: string;
   description?: string | null;
-  category: 'pyq' | 'notes' | 'study_material' | 'other';
+  category: 'pyq' | 'notes' | 'syllabus' | 'study_material' | 'other';
   subject?: string | null;
   exam_year?: number | null;
   file_type: 'pdf' | 'docx' | 'image';

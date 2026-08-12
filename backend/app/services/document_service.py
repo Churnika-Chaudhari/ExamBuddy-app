@@ -108,6 +108,7 @@ class DocumentService:
             file_bytes,
             file_type,
             resolved_subject,
+            category,
         )
 
         if self.subject_service and resolved_subject and category == "pyq":
@@ -160,6 +161,7 @@ class DocumentService:
         file_bytes: bytes,
         file_type: str,
         subject: str | None = None,
+        category: str | None = None,
     ) -> None:
         try:
             processed = await extract_and_chunk_async(file_bytes, file_type)
@@ -168,17 +170,41 @@ class DocumentService:
                     "No text could be extracted from this file. "
                     "Ensure the PDF contains selectable text (not a scanned image-only PDF)."
                 )
-            await self.document_repo.update(
-                document_id,
-                user_id,
-                {
-                    "extracted_text": processed["text"],
-                    "text_chunks": processed["chunks"],
-                    "page_count": processed["page_count"],
-                    "status": ProcessingStatus.READY,
-                    "error_message": None,
-                },
-            )
+            update_fields: dict[str, Any] = {
+                "extracted_text": processed["text"],
+                "text_chunks": processed["chunks"],
+                "page_count": processed["page_count"],
+                "status": ProcessingStatus.READY,
+                "error_message": None,
+            }
+
+            # Syllabus: parse subjects / units / topics after text extraction.
+            if category == "syllabus":
+                from app.utils.syllabus_parser import extract_syllabus_structure
+                from app.utils.subject_detector import normalize_subject_name
+
+                structure = extract_syllabus_structure(
+                    processed["text"],
+                    default_subject=subject,
+                )
+                update_fields["syllabus_structure"] = structure
+
+                # If the user did not set a subject and the syllabus is single-subject,
+                # store that subject on the document for later matching.
+                subject_names = [
+                    normalize_subject_name(n)
+                    for n in (structure.get("subject_names") or [])
+                    if n
+                ]
+                if not subject and len(subject_names) == 1:
+                    update_fields["subject"] = subject_names[0]
+                    logger.info(
+                        "Syllabus subject inferred for %s: %s",
+                        document_id,
+                        subject_names[0],
+                    )
+
+            await self.document_repo.update(document_id, user_id, update_fields)
         except Exception as exc:
             logger.error("Text extraction failed for document %s: %s", document_id, exc)
             await self.document_repo.update(

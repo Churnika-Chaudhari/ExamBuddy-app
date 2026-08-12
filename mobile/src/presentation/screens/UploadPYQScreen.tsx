@@ -22,7 +22,7 @@ import { mergeFiles, pickMultiplePdfs } from '@/utils/pickDocuments';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'UploadPYQ'>;
 
-type DocCategory = 'pyq' | 'notes';
+type DocCategory = 'pyq' | 'syllabus';
 
 const CATEGORY_COPY: Record<DocCategory, { heading: string; desc: string; noun: string }> = {
   pyq: {
@@ -30,10 +30,10 @@ const CATEGORY_COPY: Record<DocCategory, { heading: string; desc: string; noun: 
     desc: 'Select previous-year question papers to analyze and extract topics.',
     noun: 'paper',
   },
-  notes: {
-    heading: 'Upload Notes',
-    desc: 'Add your notes PDFs. They appear in the Notes tab and are used as the top-priority source for AI study notes.',
-    noun: 'notes PDF',
+  syllabus: {
+    heading: 'Upload Syllabus',
+    desc: 'Upload a syllabus for one subject or a combined multi-subject syllabus. Topics from your PYQs will be matched to it.',
+    noun: 'syllabus PDF',
   },
 };
 
@@ -48,7 +48,7 @@ function buildTitle(files: PickedFile[], category: DocCategory): string {
   }
   const labels: Record<DocCategory, string> = {
     pyq: 'PYQ Set',
-    notes: 'Notes Set',
+    syllabus: 'Syllabus Set',
   };
   return `${labels[category]} (${files.length} files)`;
 }
@@ -118,13 +118,13 @@ export default function UploadPYQScreen() {
         subject: trimmedSubject || undefined,
       });
 
-      // Notes are RAG source material — upload only.
-      if (category !== 'pyq') {
+      // Syllabus is source material — upload & extract only (no PYQ analysis).
+      if (category === 'syllabus') {
         showSnackbar(
-          `Uploaded ${docs.length} ${copy.noun}${docs.length > 1 ? 's' : ''}. View them in the Notes tab.`,
+          `Uploaded ${docs.length} ${copy.noun}${docs.length > 1 ? 's' : ''}. Text extraction started.`,
           'success'
         );
-        navigation.replace('Main', { screen: 'Notes' });
+        navigation.replace('UploadedDocuments');
         return;
       }
 
@@ -205,25 +205,27 @@ export default function UploadPYQScreen() {
       <SegmentedButtons
         value={category}
         onValueChange={(v) => setCategory(v as DocCategory)}
-        density="medium"
+        density="small"
         style={styles.segmented}
         buttons={[
           { value: 'pyq', label: 'PYQ', icon: 'file-document-outline' },
-          { value: 'notes', label: 'Notes', icon: 'note-text-outline' },
+          { value: 'syllabus', label: 'Syllabus', icon: 'book-education-outline' },
         ]}
       />
 
       <TextInput
         mode="outlined"
-        label="Subject (optional)"
-        placeholder="e.g. DBMS, Computer Networks"
+        label={category === 'syllabus' ? 'Subject (optional for multi-subject)' : 'Subject (optional)'}
+        placeholder="e.g. WebX, Data Mining"
         value={subject}
         onChangeText={setSubject}
         style={styles.subjectInput}
         left={<TextInput.Icon icon="bookmark-outline" />}
       />
       <Text style={styles.subjectHint}>
-        Helps group this with the right subject so notes pull from every related PDF.
+        {category === 'syllabus'
+          ? 'Leave blank for a combined multi-subject syllabus. For a single-subject file, enter the subject name.'
+          : 'Helps group this with the right subject so notes and quizzes stay organized.'}
       </Text>
 
       <AppButton

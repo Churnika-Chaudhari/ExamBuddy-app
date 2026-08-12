@@ -134,6 +134,30 @@ class AnalysisService:
                 local_topics=local_analysis,
             )
             result = self.notes_pipeline.merge_ai_analysis(local_analysis, result)
+
+            # Optional syllabus matching: remap topic names / units to syllabus catalog.
+            syllabus_docs = await self.document_repo.list_by_user(
+                user_id, skip=0, limit=100, category="syllabus"
+            )
+            if syllabus_docs:
+                from app.utils.syllabus_parser import (
+                    collect_syllabus_catalog,
+                    match_topics_to_syllabus,
+                )
+
+                catalog = collect_syllabus_catalog(
+                    syllabus_docs,
+                    preferred_subject=subject,
+                )
+                if catalog.get("catalog"):
+                    result = match_topics_to_syllabus(
+                        result,
+                        catalog,
+                        preferred_subject=subject,
+                    )
+                    metadata["syllabus_matched"] = True
+                    metadata["syllabus_topics_available"] = len(catalog.get("catalog") or [])
+
             metadata["pipeline"] = {
                 "lines_removed": pipeline_result.preprocess_stats.lines_removed,
                 "questions_parsed": len(pipeline_result.question_lines),

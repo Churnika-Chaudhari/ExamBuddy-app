@@ -4,6 +4,7 @@ from enum import StrEnum
 class DocumentCategory(StrEnum):
     PYQ = "pyq"
     NOTES = "notes"
+    SYLLABUS = "syllabus"
     STUDY_MATERIAL = "study_material"
     OTHER = "other"
 

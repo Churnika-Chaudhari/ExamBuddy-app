@@ -23,6 +23,7 @@ _MAX_CONTEXT_CHARS = 10_000
 # materials, then anything else. AI knowledge is only used when nothing is found.
 _CATEGORY_BOOST: dict[str, float] = {
     "notes": 24.0,
+    "syllabus": 14.0,
     "study_material": 12.0,
     "pyq": 8.0,
     "other": 2.0,
