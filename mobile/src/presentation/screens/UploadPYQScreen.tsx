@@ -215,7 +215,7 @@ export default function UploadPYQScreen() {
 
       <TextInput
         mode="outlined"
-        label={category === 'syllabus' ? 'Subject (optional for multi-subject)' : 'Subject (optional)'}
+        label={category === 'syllabus' ? 'Subject (optional for multi-subject)' : 'Subject'}
         placeholder="e.g. WebX, Data Mining"
         value={subject}
         onChangeText={setSubject}
@@ -225,7 +225,7 @@ export default function UploadPYQScreen() {
       <Text style={styles.subjectHint}>
         {category === 'syllabus'
           ? 'Leave blank for a combined multi-subject syllabus. For a single-subject file, enter the subject name.'
-          : 'Helps group this with the right subject so notes and quizzes stay organized.'}
+          : 'Enter the subject name so it appears in Quiz selection (e.g. WebX). If left blank, the app tries to detect it from the file name or paper.'}
       </Text>
 
       <AppButton

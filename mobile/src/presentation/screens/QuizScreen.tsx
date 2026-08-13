@@ -58,8 +58,10 @@ export default function QuizScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchQuizzes();
-      fetchSubjects().catch(() => undefined);
-    }, [fetchQuizzes, fetchSubjects])
+      fetchSubjects().catch((err) => {
+        showSnackbar(getErrorMessage(err), 'error');
+      });
+    }, [fetchQuizzes, fetchSubjects, showSnackbar])
   );
 
   const handleGenerate = async () => {

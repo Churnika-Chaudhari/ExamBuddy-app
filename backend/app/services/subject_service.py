@@ -36,41 +36,49 @@ class SubjectService:
             "created_at": mapped.get("created_at"),
         }
 
+    def _resolve_doc_subject(self, doc: dict[str, Any]) -> str | None:
+        return resolve_document_subject(
+            explicit_subject=doc.get("subject"),
+            filename=doc.get("title"),
+            title=doc.get("title"),
+            extracted_text=doc.get("extracted_text"),
+        )
+
     async def sync_all_for_user(self, user_id: str) -> None:
         """Rebuild subject counts from PYQs, completed analyses, and generated notes."""
         counts: dict[str, dict[str, int]] = {}
+
+        def _ensure(name: str) -> dict[str, int]:
+            key = normalize_subject_name(name)
+            if not key:
+                return {}
+            # Case-insensitive merge so "WebX" and "webx" stay one subject.
+            for existing in list(counts):
+                if existing.lower() == key.lower():
+                    return counts[existing]
+            counts[key] = {"pyq_count": 0, "topic_count": 0}
+            return counts[key]
 
         docs = await self.document_repo.list_by_user(
             user_id, skip=0, limit=500, category="pyq"
         )
         for doc in docs:
-            subject = resolve_document_subject(
-                explicit_subject=doc.get("subject"),
-                filename=doc.get("title"),
-                title=doc.get("title"),
-            )
+            subject = self._resolve_doc_subject(doc)
             if not subject:
                 continue
-            key = normalize_subject_name(subject)
-            if key not in counts:
-                counts[key] = {"pyq_count": 0, "topic_count": 0}
-            counts[key]["pyq_count"] += 1
+            bucket = _ensure(subject)
+            if bucket:
+                bucket["pyq_count"] += 1
 
         # Uploaded notes with a subject also surface in the quiz subject list.
         notes_docs = await self.document_repo.list_by_user(
             user_id, skip=0, limit=500, category="notes"
         )
         for doc in notes_docs:
-            subject = resolve_document_subject(
-                explicit_subject=doc.get("subject"),
-                filename=doc.get("title"),
-                title=doc.get("title"),
-            )
+            subject = self._resolve_doc_subject(doc)
             if not subject:
                 continue
-            key = normalize_subject_name(subject)
-            if key not in counts:
-                counts[key] = {"pyq_count": 0, "topic_count": 0}
+            _ensure(subject)
 
         analyses = await self.analysis_repo.list_by_user(user_id, limit=200)
         for analysis in analyses:
@@ -78,13 +86,22 @@ class SubjectService:
                 continue
             subject = normalize_subject_name(analysis.get("subject") or "")
             if not subject:
+                doc_ids = [str(d) for d in (analysis.get("document_ids") or [])]
+                if doc_ids:
+                    linked = await self.document_repo.get_many_by_ids(doc_ids, user_id)
+                    for doc in linked:
+                        subject = self._resolve_doc_subject(doc) or ""
+                        if subject:
+                            break
+            if not subject:
                 continue
             topics = _topics_from_analysis_doc(analysis)
-            if subject not in counts:
-                counts[subject] = {"pyq_count": 0, "topic_count": 0}
-            counts[subject]["topic_count"] = max(
-                counts[subject]["topic_count"], len(topics)
-            )
+            bucket = _ensure(subject)
+            if bucket:
+                bucket["topic_count"] = max(bucket["topic_count"], len(topics))
+                # Ensure analyzed papers appear even when document.subject was blank.
+                if bucket["pyq_count"] == 0:
+                    bucket["pyq_count"] = max(1, len(analysis.get("document_ids") or [1]))
 
         # Generated notes subjects (topic/batch notes) also appear dynamically.
         if self.generated_notes_repo:
@@ -94,10 +111,8 @@ class SubjectService:
                 )
                 for note in generated:
                     subject = normalize_subject_name(note.get("subject") or "")
-                    if not subject:
-                        continue
-                    if subject not in counts:
-                        counts[subject] = {"pyq_count": 0, "topic_count": 0}
+                    if subject:
+                        _ensure(subject)
             except Exception as exc:
                 logger.warning("Could not sync subjects from generated notes: %s", exc)
 
@@ -107,6 +122,7 @@ class SubjectService:
                 name,
                 pyq_count=data["pyq_count"],
                 topic_count=data["topic_count"],
+                unhide=True,
             )
 
     async def on_pyq_uploaded(self, user_id: str, subject: str) -> None:

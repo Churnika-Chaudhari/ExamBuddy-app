@@ -14,6 +14,7 @@ class SubjectRepository(BaseRepository):
         *,
         pyq_count: int | None = None,
         topic_count: int | None = None,
+        unhide: bool = False,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
         normalized = " ".join(name.strip().split())
@@ -28,6 +29,8 @@ class SubjectRepository(BaseRepository):
             set_fields["topic_count"] = topic_count
         set_fields.setdefault("pyq_count", 0)
         set_fields.setdefault("topic_count", 0)
+        if unhide:
+            set_fields["hidden"] = False
 
         result = await self.collection.find_one_and_update(
             query,
@@ -51,7 +54,7 @@ class SubjectRepository(BaseRepository):
             {"user_id": self.to_object_id(user_id), "name": normalized},
             {
                 "$inc": {"pyq_count": delta},
-                "$set": {"updated_at": now, "last_updated": now},
+                "$set": {"updated_at": now, "last_updated": now, "hidden": False},
                 "$setOnInsert": {
                     "user_id": self.to_object_id(user_id),
                     "name": normalized,
@@ -72,6 +75,7 @@ class SubjectRepository(BaseRepository):
                     "topic_count": topic_count,
                     "updated_at": now,
                     "last_updated": now,
+                    "hidden": False,
                 },
                 "$setOnInsert": {
                     "user_id": self.to_object_id(user_id),

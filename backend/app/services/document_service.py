@@ -178,10 +178,14 @@ class DocumentService:
                 "error_message": None,
             }
 
+            from app.utils.subject_detector import (
+                normalize_subject_name,
+                resolve_document_subject,
+            )
+
             # Syllabus: parse subjects / units / topics after text extraction.
             if category == "syllabus":
                 from app.utils.syllabus_parser import extract_syllabus_structure
-                from app.utils.subject_detector import normalize_subject_name
 
                 structure = extract_syllabus_structure(
                     processed["text"],
@@ -203,6 +207,28 @@ class DocumentService:
                         document_id,
                         subject_names[0],
                     )
+            elif category == "pyq" and not (subject or "").strip():
+                # Infer subject from filename / paper header so quiz list can show it.
+                inferred = resolve_document_subject(
+                    explicit_subject=None,
+                    filename=None,
+                    title=None,
+                    extracted_text=processed["text"],
+                )
+                # Prefer title-derived subject when paper text lacks a clear header.
+                if not inferred:
+                    doc = await self.document_repo.get_by_id_and_user(document_id, user_id)
+                    inferred = resolve_document_subject(
+                        explicit_subject=None,
+                        filename=(doc or {}).get("title"),
+                        title=(doc or {}).get("title"),
+                        extracted_text=processed["text"],
+                    )
+                if inferred:
+                    update_fields["subject"] = inferred
+                    logger.info("PYQ subject inferred for %s: %s", document_id, inferred)
+                    if self.subject_service:
+                        await self.subject_service.on_pyq_uploaded(user_id, inferred)
 
             await self.document_repo.update(document_id, user_id, update_fields)
         except Exception as exc:

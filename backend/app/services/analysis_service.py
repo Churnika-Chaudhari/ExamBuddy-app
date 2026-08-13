@@ -15,6 +15,7 @@ from app.services.mappers import map_document_response
 from app.services.subject_service import SubjectService
 from app.services.pipeline.notes_pipeline import NotesPipeline
 from app.services.quiz_service import _topics_from_analysis_doc
+from app.utils.subject_detector import resolve_document_subject
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -61,12 +62,24 @@ class AnalysisService:
                 details=[{"id": str(doc["_id"]), "status": doc.get("status")} for doc in not_ready],
             )
 
+        resolved_subject = subject
+        if not resolved_subject:
+            for doc in documents:
+                resolved_subject = resolve_document_subject(
+                    explicit_subject=doc.get("subject"),
+                    filename=doc.get("title"),
+                    title=doc.get("title"),
+                    extracted_text=doc.get("extracted_text"),
+                )
+                if resolved_subject:
+                    break
+
         now = datetime.now(UTC)
         analysis = await self.analysis_repo.create(
             {
                 "user_id": self.analysis_repo.to_object_id(user_id),
                 "document_ids": [doc["_id"] for doc in documents],
-                "subject": subject or documents[0].get("subject"),
+                "subject": resolved_subject,
                 "title": title or f"PYQ Analysis - {now.strftime('%Y-%m-%d %H:%M')}",
                 "status": AnalysisStatus.PROCESSING,
                 "repeated_questions": [],
@@ -94,11 +107,27 @@ class AnalysisService:
         )
 
         await self.stats_repo.increment_field(user_id, "analyses_count")
+        # Backfill subject onto PYQ documents so quiz subject sync can find them later.
+        if resolved_subject:
+            backfilled = False
+            for doc in documents:
+                if not (doc.get("subject") or "").strip():
+                    await self.document_repo.update(
+                        str(doc["_id"]),
+                        user_id,
+                        {"subject": resolved_subject},
+                    )
+                    doc["subject"] = resolved_subject
+                    backfilled = True
+            if backfilled and self.subject_service:
+                await self.subject_service.on_pyq_uploaded(user_id, resolved_subject)
+
         background_tasks.add_task(
             self._run_analysis,
             str(analysis["_id"]),
             user_id,
             documents,
+            resolved_subject,
         )
 
         return self._map_analysis(analysis)
@@ -108,6 +137,7 @@ class AnalysisService:
         analysis_id: str,
         user_id: str,
         documents: list[dict[str, Any]],
+        analysis_subject: str | None = None,
     ) -> None:
         try:
             combined_text = "\n\n---\n\n".join(
@@ -118,7 +148,18 @@ class AnalysisService:
             if not combined_text.strip():
                 raise ValidationAppError("No extractable text found in selected documents")
 
-            subject = documents[0].get("subject")
+            subject = analysis_subject
+            if not subject:
+                for doc in documents:
+                    subject = resolve_document_subject(
+                        explicit_subject=doc.get("subject"),
+                        filename=doc.get("title"),
+                        title=doc.get("title"),
+                        extracted_text=doc.get("extracted_text"),
+                    )
+                    if subject:
+                        break
+
             pipeline_result = await self.notes_pipeline.run_async(
                 combined_text,
                 subject=subject,
@@ -164,32 +205,32 @@ class AnalysisService:
                 "topics_extracted": len(result.get("topic_table") or []),
             }
 
-            await self.analysis_repo.update(
-                analysis_id,
-                {
-                    "status": AnalysisStatus.COMPLETED,
-                    "repeated_questions": result.get("repeated_questions", []),
-                    "topic_frequency": result.get("topic_frequency", {}),
-                    "important_topics": result.get("important_topics", []),
-                    "topic_table": result.get("topic_table", []),
-                    "academic_topic_table": result.get("academic_topic_table", []),
-                    "topic_frequency_table": result.get("topic_frequency_table", []),
-                    "high_priority_topics": result.get("high_priority_topics", []),
-                    "medium_priority_topics": result.get("medium_priority_topics", []),
-                    "low_priority_topics": result.get("low_priority_topics", []),
-                    "predicted_important_topics": result.get("predicted_important_topics", []),
-                    "most_important_topics": result.get("most_important_topics", []),
-                    "frequently_asked_topics": result.get("frequently_asked_topics", []),
-                    "rarely_asked_topics": result.get("rarely_asked_topics", []),
-                    "topic_groups": result.get("topic_groups", []),
-                    "syllabus_topics": result.get("syllabus_topics", []),
-                    "exam_patterns": result.get("exam_patterns", []),
-                    "summary": result.get("summary"),
-                    "ai_metadata": metadata,
-                    "error_message": None,
-                    "completed_at": datetime.now(UTC),
-                },
-            )
+            update_payload: dict[str, Any] = {
+                "status": AnalysisStatus.COMPLETED,
+                "repeated_questions": result.get("repeated_questions", []),
+                "topic_frequency": result.get("topic_frequency", {}),
+                "important_topics": result.get("important_topics", []),
+                "topic_table": result.get("topic_table", []),
+                "academic_topic_table": result.get("academic_topic_table", []),
+                "topic_frequency_table": result.get("topic_frequency_table", []),
+                "high_priority_topics": result.get("high_priority_topics", []),
+                "medium_priority_topics": result.get("medium_priority_topics", []),
+                "low_priority_topics": result.get("low_priority_topics", []),
+                "predicted_important_topics": result.get("predicted_important_topics", []),
+                "most_important_topics": result.get("most_important_topics", []),
+                "frequently_asked_topics": result.get("frequently_asked_topics", []),
+                "rarely_asked_topics": result.get("rarely_asked_topics", []),
+                "topic_groups": result.get("topic_groups", []),
+                "syllabus_topics": result.get("syllabus_topics", []),
+                "exam_patterns": result.get("exam_patterns", []),
+                "summary": result.get("summary"),
+                "ai_metadata": metadata,
+                "error_message": None,
+                "completed_at": datetime.now(UTC),
+            }
+            if subject:
+                update_payload["subject"] = subject
+            await self.analysis_repo.update(analysis_id, update_payload)
             await self.stats_repo.add_activity(
                 user_id,
                 {
@@ -199,6 +240,14 @@ class AnalysisService:
                     "timestamp": datetime.now(UTC),
                 },
             )
+            if subject:
+                for doc in documents:
+                    if not (doc.get("subject") or "").strip():
+                        await self.document_repo.update(
+                            str(doc["_id"]),
+                            user_id,
+                            {"subject": subject},
+                        )
             if self.subject_service and subject:
                 topic_count = len(_topics_from_analysis_doc(result))
                 await self.subject_service.on_analysis_completed(user_id, subject, topic_count)
