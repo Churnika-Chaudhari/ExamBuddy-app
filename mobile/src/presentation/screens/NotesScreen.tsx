@@ -251,8 +251,8 @@ export default function NotesScreen() {
                       {subject.name}
                     </Text>
                     <Text style={styles.subjectMeta}>
-                      {subject.pyq_count} PYQ{subject.pyq_count === 1 ? '' : 's'} ·{' '}
-                      {subject.topic_count} topic{subject.topic_count === 1 ? '' : 's'}
+                      {subject.topic_count} topic{subject.topic_count === 1 ? '' : 's'} ·{' '}
+                      {subject.pyq_count} paper{subject.pyq_count === 1 ? '' : 's'}
                     </Text>
                   </AppCard>
                 </Pressable>

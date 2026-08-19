@@ -72,6 +72,10 @@ class NotesService:
         subject: str | None = None,
         unit: str | None = None,
         frequency: int | None = None,
+        occurrence_count: int | None = None,
+        paper_count: int | None = None,
+        total_marks: float | None = None,
+        priority: str | None = None,
         regenerate: bool = False,
     ) -> dict[str, Any]:
         topic = topic.strip()
@@ -106,7 +110,12 @@ class NotesService:
             topic,
             analysis_id=analysis_id,
             subject=subject or (analysis_doc.get("subject") if analysis_doc else None),
-            frequency=frequency,
+            frequency=frequency or occurrence_count,
+            occurrence_count=occurrence_count,
+            paper_count=paper_count,
+            total_marks=total_marks,
+            priority=priority,
+            unit=unit,
         )
         subject = ctx["subject"]
         frequency = ctx["frequency"]
@@ -114,11 +123,12 @@ class NotesService:
         rag_sources = ctx["rag_sources"]
 
         logger.info(
-            "Generating notes topic=%s user=%s rag_chunks=%d regenerate=%s",
+            "Generating notes topic=%s user=%s rag_chunks=%d regenerate=%s priority=%s",
             topic,
             user_id,
             len(rag_sources),
             regenerate,
+            priority,
         )
 
         result, metadata = await self.ai_service.generate_topic_notes(
@@ -179,8 +189,15 @@ class NotesService:
         analysis_id: str | None = None,
         subject: str | None = None,
         frequency: int | None = None,
+        occurrence_count: int | None = None,
+        paper_count: int | None = None,
+        total_marks: float | None = None,
+        priority: str | None = None,
+        unit: str | None = None,
     ) -> dict[str, Any]:
         """Shared context gathering for generate + stream paths."""
+        from app.utils.topic_priority import exam_priority_label
+
         analysis_context = ""
         pyq_questions = ""
         document_ids: list[str] = []
@@ -204,17 +221,36 @@ class NotesService:
 
         pipeline_context = ""
         exam_priority = ""
+        occ = occurrence_count if occurrence_count is not None else frequency
         if analysis_doc:
             pipeline_context = self.notes_pipeline.build_notes_context(
-                topic, analysis_doc, frequency=frequency
+                topic, analysis_doc, frequency=occ
             )
-            if not frequency:
+            if not occ:
                 for row in analysis_doc.get("topic_frequency_table") or []:
                     if str(row.get("topic", "")).lower() == topic.lower():
-                        frequency = int(row.get("frequency", 0))
+                        occ = int(row.get("frequency", 0))
                         break
-            # Depth hint only — never printed in student-facing notes.
-            exam_priority = self.notes_pipeline.topic_frequency_label(frequency) or "Standard"
+            if priority:
+                exam_priority = exam_priority_label(
+                    priority,
+                    occurrence_count=occ,
+                    paper_count=paper_count,
+                    total_marks=total_marks,
+                    subject=subject,
+                    module=unit,
+                )
+            else:
+                exam_priority = self.notes_pipeline.topic_frequency_label(occ) or "Standard"
+        elif priority:
+            exam_priority = exam_priority_label(
+                priority,
+                occurrence_count=occ,
+                paper_count=paper_count,
+                total_marks=total_marks,
+                subject=subject,
+                module=unit,
+            )
 
         return {
             "analysis_context": analysis_context,
@@ -224,7 +260,7 @@ class NotesService:
             "pipeline_context": pipeline_context,
             "exam_priority": exam_priority,
             "subject": subject,
-            "frequency": frequency,
+            "frequency": occ,
         }
 
     async def stream_topic_note(
@@ -236,6 +272,10 @@ class NotesService:
         subject: str | None = None,
         unit: str | None = None,
         frequency: int | None = None,
+        occurrence_count: int | None = None,
+        paper_count: int | None = None,
+        total_marks: float | None = None,
+        priority: str | None = None,
     ):
         """Yield SSE-style JSON events with streamed note tokens."""
         topic = topic.strip()
@@ -247,7 +287,12 @@ class NotesService:
             topic,
             analysis_id=analysis_id,
             subject=subject,
-            frequency=frequency,
+            frequency=frequency or occurrence_count,
+            occurrence_count=occurrence_count,
+            paper_count=paper_count,
+            total_marks=total_marks,
+            priority=priority,
+            unit=unit,
         )
 
         async for token in self.ai_service.stream_topic_notes(

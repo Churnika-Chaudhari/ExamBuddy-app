@@ -14,10 +14,22 @@ _SUBJECT_HEADER = re.compile(
     re.I,
 )
 _UNIT_HEADER = re.compile(
-    r"^(?:unit|module|chapter|section)\s*[:=\-–—]?\s*"
+    r"^(?:unit|module|chapter|section|part)\s*[:=\-–—]?\s*"
     r"([IVXivx0-9]+|[A-Za-z])?\s*[:.\-–—)]?\s*(.*)$",
     re.I,
 )
+_ROMAN_MAP = {
+    "i": 1,
+    "ii": 2,
+    "iii": 3,
+    "iv": 4,
+    "v": 5,
+    "vi": 6,
+    "vii": 7,
+    "viii": 8,
+    "ix": 9,
+    "x": 10,
+}
 _TOPIC_BULLET = re.compile(r"^[\-\*\u2022\u25cf\u25e6]\s+(.+)$")
 _TOPIC_NUMBERED = re.compile(r"^(?:\d+[.)\]:]|\([a-z0-9]+\)|[a-z][.)])\s+(.+)$", re.I)
 _ALL_CAPS_SUBJECT = re.compile(r"^[A-Z][A-Z0-9 &\-/]{2,60}$")
@@ -51,6 +63,15 @@ def _looks_like_subject_title(line: str) -> bool:
     return False
 
 
+def _parse_unit_number(raw: str | None) -> int | None:
+    if not raw:
+        return None
+    token = str(raw).strip().lower()
+    if token.isdigit():
+        return int(token)
+    return _ROMAN_MAP.get(token)
+
+
 def extract_syllabus_structure(
     text: str,
     *,
@@ -67,36 +88,53 @@ def extract_syllabus_structure(
     subjects: list[dict[str, Any]] = []
     current_subject: dict[str, Any] | None = None
     current_unit: dict[str, Any] | None = None
+    awaiting_module_title = False
     fallback_subject = normalize_subject_name(default_subject or "") or "General"
 
     def _ensure_subject(name: str) -> dict[str, Any]:
-        nonlocal current_subject, current_unit
+        nonlocal current_subject, current_unit, awaiting_module_title
         key = normalize_subject_name(name) or fallback_subject
         for existing in subjects:
             if existing["name"].lower() == key.lower():
                 current_subject = existing
                 current_unit = None
+                awaiting_module_title = False
                 return existing
         subject = {"name": key, "units": [], "topics": [], "subtopics": []}
         subjects.append(subject)
         current_subject = subject
         current_unit = None
+        awaiting_module_title = False
         return subject
 
-    def _ensure_unit(name: str) -> dict[str, Any]:
-        nonlocal current_unit
+    def _ensure_unit(
+        name: str,
+        *,
+        module_number: int | None = None,
+        module_name: str | None = None,
+    ) -> dict[str, Any]:
+        nonlocal current_unit, awaiting_module_title
         subject = current_subject or _ensure_subject(fallback_subject)
-        unit_name = _normalize_line(name) or "General"
+        unit_name = _normalize_line(name) or "General Topics"
         for existing in subject["units"]:
             if existing["name"].lower() == unit_name.lower():
                 current_unit = existing
+                awaiting_module_title = not bool(existing.get("module_name"))
                 return existing
-        unit = {"name": unit_name, "topics": [], "subtopics": []}
+        unit = {
+            "name": unit_name,
+            "module_number": module_number,
+            "module_name": module_name or None,
+            "topics": [],
+            "subtopics": [],
+        }
         subject["units"].append(unit)
         current_unit = unit
+        awaiting_module_title = not bool(module_name)
         return unit
 
     def _add_topic(topic: str, *, is_subtopic: bool = False) -> None:
+        nonlocal awaiting_module_title
         cleaned = _clean_topic_phrase(topic)
         if not cleaned or not is_valid_topic(cleaned):
             return
@@ -104,7 +142,17 @@ def extract_syllabus_structure(
         subject = current_subject or _ensure_subject(fallback_subject)
         unit = current_unit
         if unit is None:
-            unit = _ensure_unit("General")
+            unit = _ensure_unit("General Topics", module_number=1, module_name="General Topics")
+            awaiting_module_title = False
+
+        # First plain title line after "MODULE II" becomes the module name.
+        if awaiting_module_title and not is_subtopic and len(display.split()) <= 8:
+            unit["module_name"] = display
+            num = unit.get("module_number")
+            unit["name"] = f"Module {num}: {display}" if num else display
+            awaiting_module_title = False
+            return
+
         bucket = unit["subtopics"] if is_subtopic else unit["topics"]
         subject_bucket = subject["subtopics"] if is_subtopic else subject["topics"]
         if display.lower() not in {t.lower() for t in bucket}:
@@ -121,49 +169,73 @@ def extract_syllabus_structure(
             _ensure_subject(subject_match.group(1))
             continue
 
-        if _looks_like_subject_title(line) and len(line) <= 60:
-            # Prefer treating ALL-CAPS headers as subjects in multi-subject syllabi.
-            _ensure_subject(line.title() if line.isupper() else line)
-            continue
-
         unit_match = _UNIT_HEADER.match(line)
         if unit_match:
-            num = (unit_match.group(1) or "").strip()
+            num_raw = (unit_match.group(1) or "").strip()
             rest = (unit_match.group(2) or "").strip()
-            label = f"Unit {num}".strip() if num else "Unit"
-            if rest:
-                label = f"{label}: {rest}" if num else rest
-            _ensure_unit(label)
+            number = _parse_unit_number(num_raw)
+            kind = "Module"
+            lower = line.lower()
+            if lower.startswith("unit"):
+                kind = "Unit"
+            elif lower.startswith("chapter"):
+                kind = "Chapter"
+            elif lower.startswith("section"):
+                kind = "Section"
+            elif lower.startswith("part"):
+                kind = "Part"
+            if number is not None and rest:
+                label = f"{kind} {number}: {rest}"
+                _ensure_unit(label, module_number=number, module_name=rest)
+            elif number is not None:
+                label = f"{kind} {number}"
+                _ensure_unit(label, module_number=number, module_name=None)
+            elif rest:
+                _ensure_unit(rest, module_number=None, module_name=rest)
+            else:
+                _ensure_unit(kind, module_number=None, module_name=None)
+            continue
+
+        # Avoid treating module titles / short headers as new subjects when a unit is open.
+        if (
+            current_unit is None
+            and _looks_like_subject_title(line)
+            and len(line) <= 60
+        ):
+            _ensure_subject(line.title() if line.isupper() else line)
             continue
 
         bullet = _TOPIC_BULLET.match(line)
         if bullet:
+            awaiting_module_title = False
             _add_topic(bullet.group(1))
             continue
 
         numbered = _TOPIC_NUMBERED.match(line)
         if numbered:
-            # Nested (a)(b) style → subtopic when a unit already exists.
+            awaiting_module_title = False
             if re.match(r"^\([a-z0-9]+\)", line, re.I) and current_unit:
                 _add_topic(numbered.group(1), is_subtopic=True)
             else:
                 _add_topic(numbered.group(1))
             continue
 
-        # Plain topic-like lines under a unit.
-        if current_unit and is_valid_topic(line) and len(line.split()) <= 10:
+        # Plain topic-like lines under a unit (or pending module title).
+        if current_unit and (awaiting_module_title or (is_valid_topic(line) and len(line.split()) <= 10)):
             _add_topic(line)
 
     if not subjects:
         _ensure_subject(fallback_subject)
 
     # Flat catalog for matching.
-    catalog: list[dict[str, str]] = []
+    catalog: list[dict[str, Any]] = []
     seen: set[str] = set()
     for subject in subjects:
         for unit in subject.get("units") or []:
+            number = unit.get("module_number")
+            module_name = unit.get("module_name") or unit.get("name") or "General Topics"
             for topic in (unit.get("topics") or []) + (unit.get("subtopics") or []):
-                key = topic.lower()
+                key = f"{subject['name']}|{topic}".lower()
                 if key in seen:
                     continue
                 seen.add(key)
@@ -171,18 +243,22 @@ def extract_syllabus_structure(
                     {
                         "subject": subject["name"],
                         "unit": unit["name"],
+                        "module_number": number,
+                        "module_name": module_name,
                         "topic": topic,
                     }
                 )
         for topic in subject.get("topics") or []:
-            key = topic.lower()
+            key = f"{subject['name']}|{topic}".lower()
             if key in seen:
                 continue
             seen.add(key)
             catalog.append(
                 {
                     "subject": subject["name"],
-                    "unit": "General",
+                    "unit": "General Topics",
+                    "module_number": 1,
+                    "module_name": "General Topics",
                     "topic": topic,
                 }
             )
@@ -237,7 +313,7 @@ def match_topics_to_syllabus(
             if score > best_score:
                 best_score = score
                 best = row
-        if best and best_score >= 0.62:
+        if best and best_score >= 0.82:
             return best
         return None
 

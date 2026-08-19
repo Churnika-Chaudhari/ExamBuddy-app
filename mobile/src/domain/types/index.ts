@@ -234,9 +234,38 @@ export interface QuizSubject {
 
 export interface SubjectTopic {
   topic: string;
+  topic_id?: string | null;
+  topic_name?: string | null;
   unit?: string | null;
+  module_id?: string | null;
+  module_number?: number | null;
+  module_name?: string | null;
+  from_syllabus?: boolean | null;
+  asked?: boolean | null;
+  needs_review?: boolean | null;
   frequency: number;
+  occurrence_count?: number | null;
+  paper_count?: number | null;
+  total_marks?: number | null;
   importance?: string | null;
+  priority?: 'High' | 'Medium' | 'Low' | string | null;
+  priority_score?: number | null;
+  last_occurrence?: string | null;
+  analysis_ids?: string[];
+}
+
+export interface SubjectModule {
+  module_id: string;
+  module_number?: number | null;
+  module_name: string;
+  display_name?: string | null;
+  is_unmapped?: boolean;
+  is_fallback?: boolean;
+  topic_count: number;
+  asked_topic_count?: number;
+  high_priority_count?: number;
+  question_occurrence?: number;
+  topics: SubjectTopic[];
 }
 
 export interface SubjectSourceDocument {
@@ -251,10 +280,16 @@ export interface SubjectOverview {
   subject_id: string;
   subject: string;
   topics: SubjectTopic[];
+  modules?: SubjectModule[];
+  module_count?: number;
+  has_syllabus_modules?: boolean;
   analysis_ids: string[];
+  analyzed_paper_count?: number;
+  priority_summary?: { High?: number; Medium?: number; Low?: number };
   source_documents: SubjectSourceDocument[];
   pyq_count: number;
   notes_count: number;
+  syllabus_count?: number;
   study_material_count: number;
   total_sources: number;
 }

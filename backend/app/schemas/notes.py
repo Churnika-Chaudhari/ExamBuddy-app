@@ -24,6 +24,10 @@ class TopicNoteGenerateRequest(BaseSchema):
     subject: str | None = Field(default=None, max_length=100)
     unit: str | None = Field(default=None, max_length=100)
     frequency: int | None = Field(default=None, ge=1)
+    occurrence_count: int | None = Field(default=None, ge=0)
+    paper_count: int | None = Field(default=None, ge=0)
+    total_marks: float | None = Field(default=None, ge=0)
+    priority: str | None = Field(default=None, max_length=20)
     regenerate: bool = False
 
 

@@ -15,6 +15,7 @@ import QuizAnalysisScreen from '@/presentation/screens/QuizAnalysisScreen';
 import QuizAttemptReviewScreen from '@/presentation/screens/QuizAttemptReviewScreen';
 import SplashScreen from '@/presentation/screens/SplashScreen';
 import SubjectNotesScreen from '@/presentation/screens/SubjectNotesScreen';
+import ModuleTopicsScreen from '@/presentation/screens/ModuleTopicsScreen';
 import TopicStudyNotesScreen from '@/presentation/screens/TopicStudyNotesScreen';
 import UploadPYQScreen from '@/presentation/screens/UploadPYQScreen';
 import DocumentViewerScreen from '@/presentation/screens/DocumentViewerScreen';
@@ -61,6 +62,11 @@ export default function RootNavigator() {
         name="SubjectNotes"
         component={SubjectNotesScreen}
         options={{ title: 'Subject Notes' }}
+      />
+      <Stack.Screen
+        name="ModuleTopics"
+        component={ModuleTopicsScreen}
+        options={{ title: 'Module Topics' }}
       />
       <Stack.Screen
         name="TopicStudyNotes"

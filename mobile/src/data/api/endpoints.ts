@@ -149,6 +149,10 @@ export const notesApi = {
     subject?: string;
     unit?: string;
     frequency?: number;
+    occurrence_count?: number;
+    paper_count?: number;
+    total_marks?: number;
+    priority?: string;
     regenerate?: boolean;
   }) => apiClient.post<ApiResponse<GeneratedTopicNote>>('/notes/topic/generate', payload),
 
@@ -158,6 +162,10 @@ export const notesApi = {
     subject?: string;
     unit?: string;
     frequency?: number;
+    occurrence_count?: number;
+    paper_count?: number;
+    total_marks?: number;
+    priority?: string;
   }) => apiClient.post<ApiResponse<GeneratedTopicNote>>('/notes/topic/regenerate', payload),
 
   topicStatus: (topic: string, analysisId?: string) =>

@@ -66,6 +66,10 @@ async def generate_topic_notes(
         subject=payload.subject,
         unit=payload.unit,
         frequency=payload.frequency,
+        occurrence_count=payload.occurrence_count,
+        paper_count=payload.paper_count,
+        total_marks=payload.total_marks,
+        priority=payload.priority,
         regenerate=payload.regenerate,
     )
     msg = "Cached notes returned" if data.get("cached") else "Notes generated successfully"
@@ -89,6 +93,10 @@ async def regenerate_topic_notes(
         subject=payload.subject,
         unit=payload.unit,
         frequency=payload.frequency,
+        occurrence_count=payload.occurrence_count,
+        paper_count=payload.paper_count,
+        total_marks=payload.total_marks,
+        priority=payload.priority,
         regenerate=True,
     )
     return success_response(data, "Notes regenerated successfully")
@@ -112,6 +120,10 @@ async def stream_topic_notes(
                 subject=payload.subject,
                 unit=payload.unit,
                 frequency=payload.frequency,
+                occurrence_count=payload.occurrence_count,
+                paper_count=payload.paper_count,
+                total_marks=payload.total_marks,
+                priority=payload.priority,
             ):
                 yield f"data: {json.dumps({'token': token})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"

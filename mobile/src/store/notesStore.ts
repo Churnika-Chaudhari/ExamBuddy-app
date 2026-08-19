@@ -11,7 +11,12 @@ export interface TopicNoteParams {
   analysisId?: string;
   subject?: string;
   unit?: string;
+  moduleName?: string;
   frequency?: number;
+  occurrenceCount?: number;
+  paperCount?: number;
+  totalMarks?: number;
+  priority?: string;
   regenerate?: boolean;
 }
 
@@ -137,8 +142,12 @@ export const useNotesStore = create<NotesState>((set, get) => ({
         topic: params.topic,
         analysis_id: params.analysisId,
         subject: params.subject,
-        unit: params.unit,
-        frequency: params.frequency,
+        unit: params.unit || params.moduleName,
+        frequency: params.frequency ?? params.occurrenceCount,
+        occurrence_count: params.occurrenceCount,
+        paper_count: params.paperCount,
+        total_marks: params.totalMarks,
+        priority: params.priority,
         regenerate: params.regenerate ?? false,
       });
       const note = data.data;
@@ -158,7 +167,11 @@ export const useNotesStore = create<NotesState>((set, get) => ({
         analysis_id: params.analysisId,
         subject: params.subject,
         unit: params.unit,
-        frequency: params.frequency,
+        frequency: params.frequency ?? params.occurrenceCount,
+        occurrence_count: params.occurrenceCount,
+        paper_count: params.paperCount,
+        total_marks: params.totalMarks,
+        priority: params.priority,
       });
       const note = data.data;
       set({ topicNote: note, isGenerating: false });

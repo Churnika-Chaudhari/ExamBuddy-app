@@ -21,12 +21,26 @@ export type RootStackParamList = {
   DocumentViewer: { documentId: string; title: string; fileUrl: string };
   AnalysisResult: { analysisId: string };
   SubjectNotes: { subjectId: string; subjectName?: string };
+  ModuleTopics: {
+    subjectId: string;
+    subjectName: string;
+    moduleId: string;
+    moduleName: string;
+    moduleNumber?: number | null;
+    analysisIds?: string[];
+  };
   TopicStudyNotes: {
     topic: string;
     analysisId?: string;
     subject?: string;
     unit?: string;
+    moduleName?: string;
+    moduleNumber?: number | null;
     frequency?: number;
+    occurrenceCount?: number;
+    paperCount?: number;
+    totalMarks?: number;
+    priority?: string;
   };
   NoteDetail: { noteId: string };
   QuizPlay: { quizId: string };

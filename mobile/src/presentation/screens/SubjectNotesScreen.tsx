@@ -6,10 +6,10 @@ import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, spacing, typography } from '@/core/theme';
+import { colors, radius, spacing, typography } from '@/core/theme';
 import { getErrorMessage } from '@/data/api/client';
 import { subjectsApi } from '@/data/api/endpoints';
-import type { SubjectOverview } from '@/domain/types';
+import type { SubjectModule, SubjectOverview } from '@/domain/types';
 import type { RootStackParamList } from '@/navigation/types';
 import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
@@ -22,16 +22,18 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 const CATEGORY_META: Record<string, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
   pyq: { label: 'PYQ paper', icon: 'document-text-outline' },
   notes: { label: 'Notes PDF', icon: 'reader-outline' },
+  syllabus: { label: 'Syllabus', icon: 'book-outline' },
   study_material: { label: 'Study material', icon: 'library-outline' },
   other: { label: 'Document', icon: 'document-outline' },
 };
 
 function sourceSummary(o: SubjectOverview): string {
   const parts: string[] = [];
-  if (o.pyq_count) parts.push(`${o.pyq_count} PYQ paper${o.pyq_count > 1 ? 's' : ''}`);
-  if (o.notes_count) parts.push(`${o.notes_count} notes PDF${o.notes_count > 1 ? 's' : ''}`);
-  if (o.study_material_count)
-    parts.push(`${o.study_material_count} study material${o.study_material_count > 1 ? 's' : ''}`);
+  const papers = o.analyzed_paper_count || o.pyq_count;
+  if (papers) parts.push(`${papers} analyzed paper${papers > 1 ? 's' : ''}`);
+  if (o.module_count) parts.push(`${o.module_count} module${o.module_count > 1 ? 's' : ''}`);
+  if (o.topics?.length) parts.push(`${o.topics.length} topic${o.topics.length > 1 ? 's' : ''}`);
+  if (o.syllabus_count) parts.push(`${o.syllabus_count} syllabus`);
   return parts.length ? parts.join(' · ') : 'No uploaded sources yet';
 }
 
@@ -62,18 +64,15 @@ export default function SubjectNotesScreen() {
     load();
   }, [load]);
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    load();
-  };
-
-  const openTopic = (topic: string, frequency?: number) => {
+  const openModule = (mod: SubjectModule) => {
     if (!overview) return;
-    navigation.navigate('TopicStudyNotes', {
-      topic,
-      subject: overview.subject,
-      analysisId: overview.analysis_ids[0],
-      frequency: frequency ?? undefined,
+    navigation.navigate('ModuleTopics', {
+      subjectId: overview.subject_id,
+      subjectName: overview.subject,
+      moduleId: mod.module_id,
+      moduleName: mod.display_name || mod.module_name,
+      moduleNumber: mod.module_number,
+      analysisIds: overview.analysis_ids,
     });
   };
 
@@ -97,69 +96,98 @@ export default function SubjectNotesScreen() {
     );
   }
 
-  const topics = overview.topics ?? [];
+  const modules = overview.modules?.length
+    ? overview.modules
+    : [
+        {
+          module_id: 'm_general',
+          module_name: 'General Topics',
+          display_name: 'General Topics',
+          topic_count: overview.topics?.length || 0,
+          topics: overview.topics || [],
+          asked_topic_count: overview.topics?.filter((t) => (t.occurrence_count ?? t.frequency) > 0)
+            .length,
+          high_priority_count: overview.topics?.filter((t) => t.priority === 'High').length,
+        } as SubjectModule,
+      ];
 
   return (
-    <ScreenWrapper refreshing={refreshing} onRefresh={onRefresh}>
+    <ScreenWrapper
+      refreshing={refreshing}
+      onRefresh={() => {
+        setRefreshing(true);
+        load();
+      }}
+    >
       <View style={styles.header}>
         <View style={styles.titleRow}>
           <Ionicons name="library" size={22} color={colors.primary} />
-          <Text style={styles.title}>{overview.subject} Notes</Text>
+          <Text style={styles.title}>{overview.subject}</Text>
         </View>
-        <Text style={styles.subtitle}>
-          Generated from all your uploaded {overview.subject} resources
-        </Text>
+        <Text style={styles.subtitle}>{sourceSummary(overview)}</Text>
+        <Text style={styles.breadcrumb}>Select a module to view syllabus topics</Text>
       </View>
 
-      <AppCard style={styles.sourcesCard}>
-        <Text style={styles.sectionLabel}>Generated from</Text>
-        <Text style={styles.sourceSummary}>{sourceSummary(overview)}</Text>
-        {overview.source_documents.length > 0 ? (
-          <View style={styles.sourceList}>
-            {overview.source_documents.map((src) => {
-              const meta = CATEGORY_META[src.category] ?? CATEGORY_META.other;
-              return (
-                <View key={src.id} style={styles.sourceItem}>
-                  <Ionicons name={meta.icon} size={16} color={colors.textSecondary} />
-                  <Text style={styles.sourceText} numberOfLines={1}>
-                    {src.title}
-                  </Text>
-                  <Text style={styles.sourceCat}>{meta.label}</Text>
-                </View>
-              );
-            })}
-          </View>
-        ) : null}
+      <AppCard style={styles.infoCard}>
+        <View style={styles.infoRow}>
+          <Ionicons name="information-circle-outline" size={18} color={colors.primary} />
+          <Text style={styles.infoText}>
+            Modules and topic names come from your uploaded syllabus. PYQ analysis adds occurrence
+            and exam priority so you know what has been asked before.
+          </Text>
+        </View>
       </AppCard>
 
-      <View style={styles.topicsHeader}>
-        <Text style={styles.sectionTitle}>Topics Covered</Text>
-        <Text style={styles.topicsCount}>{topics.length}</Text>
-      </View>
-      <Text style={styles.topicsHint}>
-        Tap a topic to generate full notes from every uploaded {overview.subject} document.
-      </Text>
+      {overview.source_documents?.length ? (
+        <AppCard style={styles.sourcesCard}>
+          <Text style={styles.sectionLabel}>Sources</Text>
+          {overview.source_documents.slice(0, 5).map((src) => {
+            const meta = CATEGORY_META[src.category] ?? CATEGORY_META.other;
+            return (
+              <View key={src.id} style={styles.sourceItem}>
+                <Ionicons name={meta.icon} size={16} color={colors.textSecondary} />
+                <Text style={styles.sourceText} numberOfLines={1}>
+                  {src.title}
+                </Text>
+                <Text style={styles.sourceCat}>{meta.label}</Text>
+              </View>
+            );
+          })}
+        </AppCard>
+      ) : null}
 
-      {topics.length === 0 ? (
+      <Text style={styles.sectionTitle}>Modules</Text>
+
+      {modules.length === 0 ? (
         <EmptyState
           icon="documents-outline"
-          title="No topics yet"
-          subtitle="Upload and analyze PYQs for this subject to extract topics."
+          title="No modules yet"
+          subtitle="Upload a syllabus and analyze PYQs for this subject."
         />
       ) : (
-        topics.map((t, idx) => (
-          <Pressable key={`${t.topic}-${idx}`} onPress={() => openTopic(t.topic, t.frequency)}>
-            <AppCard style={styles.topicCard}>
-              <View style={styles.topicCheck}>
-                <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+        modules.map((mod) => (
+          <Pressable key={mod.module_id} onPress={() => openModule(mod)}>
+            <AppCard style={styles.moduleCard}>
+              <View style={styles.moduleIcon}>
+                <Ionicons
+                  name={mod.is_unmapped ? 'help-circle-outline' : 'book-outline'}
+                  size={20}
+                  color={colors.primary}
+                />
               </View>
-              <View style={styles.topicMeta}>
-                <Text style={styles.topicName} numberOfLines={2}>
-                  {t.topic}
+              <View style={styles.moduleMeta}>
+                <Text style={styles.moduleName} numberOfLines={2}>
+                  {mod.display_name || mod.module_name}
                 </Text>
-                {t.frequency ? (
-                  <Text style={styles.topicFreq}>Appeared {t.frequency}x in PYQs</Text>
-                ) : null}
+                <Text style={styles.moduleStats}>
+                  {mod.topic_count} topic{mod.topic_count === 1 ? '' : 's'}
+                  {mod.asked_topic_count
+                    ? ` · ${mod.asked_topic_count} asked in PYQs`
+                    : ''}
+                  {mod.high_priority_count
+                    ? ` · ${mod.high_priority_count} high priority`
+                    : ''}
+                </Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </AppCard>
@@ -177,27 +205,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.background,
   },
-  header: {
-    marginBottom: spacing.md,
-  },
+  header: { marginBottom: spacing.md },
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     marginBottom: spacing.xs,
   },
-  title: {
-    ...typography.h2,
-    color: colors.text,
-    flex: 1,
+  title: { ...typography.h2, color: colors.text, flex: 1 },
+  subtitle: { ...typography.bodySmall, color: colors.textSecondary },
+  breadcrumb: { ...typography.caption, color: colors.primary, marginTop: spacing.xs },
+  infoCard: {
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    backgroundColor: colors.primaryLight,
   },
-  subtitle: {
-    ...typography.bodySmall,
-    color: colors.textSecondary,
-  },
+  infoRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
+  infoText: { ...typography.caption, color: colors.text, flex: 1 },
   sourcesCard: {
     padding: spacing.md,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
     backgroundColor: colors.surface,
   },
   sectionLabel: {
@@ -207,76 +234,31 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: spacing.xs,
   },
-  sourceSummary: {
-    ...typography.label,
-    color: colors.primary,
-    marginBottom: spacing.sm,
-  },
-  sourceList: {
-    gap: spacing.xs,
-  },
   sourceItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
+    marginBottom: spacing.xs,
   },
-  sourceText: {
-    ...typography.bodySmall,
-    color: colors.text,
-    flex: 1,
-    minWidth: 0,
-  },
-  sourceCat: {
-    ...typography.caption,
-    color: colors.textMuted,
-    flexShrink: 0,
-  },
-  topicsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: 2,
-  },
-  sectionTitle: {
-    ...typography.h3,
-    color: colors.text,
-  },
-  topicsCount: {
-    ...typography.caption,
-    color: colors.primary,
-    fontWeight: '700',
-    backgroundColor: colors.primaryLight,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  topicsHint: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginBottom: spacing.md,
-  },
-  topicCard: {
+  sourceText: { ...typography.bodySmall, color: colors.text, flex: 1, minWidth: 0 },
+  sourceCat: { ...typography.caption, color: colors.textMuted },
+  sectionTitle: { ...typography.h3, color: colors.text, marginBottom: spacing.sm },
+  moduleCard: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: spacing.md,
     marginBottom: spacing.sm,
     gap: spacing.sm,
   },
-  topicCheck: {
-    flexShrink: 0,
+  moduleIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  topicMeta: {
-    flex: 1,
-    minWidth: 0,
-  },
-  topicName: {
-    ...typography.label,
-    color: colors.text,
-  },
-  topicFreq: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
+  moduleMeta: { flex: 1, minWidth: 0 },
+  moduleName: { ...typography.label, color: colors.text },
+  moduleStats: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
 });

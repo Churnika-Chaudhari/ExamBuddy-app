@@ -146,6 +146,8 @@ class SubjectService:
         from bson import ObjectId
 
         from app.core.exceptions import NotFoundError
+        from app.utils.syllabus_parser import collect_syllabus_catalog
+        from app.utils.topic_priority import aggregate_subject_topics
 
         if ObjectId.is_valid(subject_id):
             subject_doc = await self.subject_repo.get_by_id_and_user(subject_id, user_id)
@@ -157,7 +159,7 @@ class SubjectService:
 
         subject_name = subject_doc.get("name", "")
         analyses = await self.analysis_repo.list_by_user(user_id, limit=200)
-        topic_map: dict[str, dict[str, Any]] = {}
+        subject_analyses: list[dict[str, Any]] = []
         analysis_ids: list[str] = []
 
         for analysis in analyses:
@@ -166,18 +168,66 @@ class SubjectService:
             a_subject = normalize_subject_name(analysis.get("subject") or "")
             if a_subject.lower() != subject_name.lower():
                 continue
+            subject_analyses.append(analysis)
             analysis_ids.append(str(analysis["_id"]))
-            for row in _topics_from_analysis_doc(analysis):
-                key = row["topic"].lower()
-                if key not in topic_map or row["frequency"] > topic_map[key]["frequency"]:
-                    topic_map[key] = row
 
-        topics = sorted(topic_map.values(), key=lambda x: x.get("frequency", 0), reverse=True)
+        syllabus_names: list[str] = []
+        syllabus_docs: list[dict[str, Any]] = []
+        catalog: dict[str, Any] = {}
+        try:
+            syllabus_docs = await self.document_repo.list_by_user(
+                user_id, skip=0, limit=100, category="syllabus"
+            )
+            if syllabus_docs:
+                catalog = collect_syllabus_catalog(
+                    syllabus_docs, preferred_subject=subject_name
+                )
+                syllabus_names = list(catalog.get("topic_names") or [])
+        except Exception as exc:
+            logger.warning("Could not load syllabus catalog for topic priority: %s", exc)
+            syllabus_docs = []
+            catalog = {}
+
+        topics = aggregate_subject_topics(
+            subject_analyses,
+            extract_topics=_topics_from_analysis_doc,
+            syllabus_topic_names=syllabus_names,
+        )
+
+        from app.utils.syllabus_modules import build_module_topic_tree
+
+        module_tree = build_module_topic_tree(
+            syllabus_structure={
+                "subjects": list(catalog.get("subjects") or []),
+                "catalog": list(catalog.get("catalog") or []),
+            }
+            if catalog.get("catalog") or catalog.get("subjects")
+            else None,
+            pyq_topics=topics,
+            preferred_subject=subject_name,
+            analyzed_paper_count=len(subject_analyses),
+        )
+
+        # Prefer module-aware flat topic list (includes unasked syllabus topics).
+        if module_tree.get("topics"):
+            topics = module_tree["topics"]
+
+        priority_summary = {"High": 0, "Medium": 0, "Low": 0}
+        for row in topics:
+            level = str(row.get("priority") or row.get("importance") or "Low")
+            if level in priority_summary:
+                priority_summary[level] += 1
+
         return {
             "subject_id": str(subject_doc["_id"]),
             "subject": subject_name,
             "topics": topics,
+            "modules": module_tree.get("modules") or [],
+            "module_count": module_tree.get("module_count") or 0,
+            "has_syllabus_modules": bool(module_tree.get("has_syllabus_modules")),
             "analysis_ids": analysis_ids,
+            "analyzed_paper_count": len(subject_analyses),
+            "priority_summary": priority_summary,
         }
 
     async def get_subject_overview(self, user_id: str, subject_id: str) -> dict[str, Any]:
@@ -189,6 +239,14 @@ class SubjectService:
         topics_data = await self.get_subject_topics(user_id, subject_id)
         subject_name = topics_data["subject"]
         target = normalize_subject_name(subject_name).strip().lower()
+
+        # Keep subject card topic counts in sync with prioritized topic list.
+        try:
+            await self.subject_repo.set_topic_count(
+                user_id, subject_name, len(topics_data.get("topics") or [])
+            )
+        except Exception as exc:
+            logger.warning("Could not refresh subject topic_count: %s", exc)
 
         docs = await self.document_repo.list_by_user(user_id, skip=0, limit=300)
         source_documents: list[dict[str, Any]] = []
@@ -219,7 +277,12 @@ class SubjectService:
             "subject_id": topics_data["subject_id"],
             "subject": subject_name,
             "topics": topics_data["topics"],
+            "modules": topics_data.get("modules") or [],
+            "module_count": topics_data.get("module_count") or 0,
+            "has_syllabus_modules": bool(topics_data.get("has_syllabus_modules")),
             "analysis_ids": topics_data["analysis_ids"],
+            "analyzed_paper_count": topics_data.get("analyzed_paper_count", 0),
+            "priority_summary": topics_data.get("priority_summary") or {},
             "source_documents": source_documents,
             "pyq_count": counts.get("pyq", 0),
             "notes_count": counts.get("notes", 0),

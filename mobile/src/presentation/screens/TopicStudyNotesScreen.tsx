@@ -59,7 +59,8 @@ function providerLabel(note: {
 
 export default function TopicStudyNotesScreen() {
   const route = useRoute<Route>();
-  const { topic, analysisId, subject, unit, frequency } = route.params;
+  const { topic, analysisId, subject, unit, frequency, occurrenceCount, paperCount, totalMarks, priority, moduleName, moduleNumber } =
+    route.params;
 
   const {
     topicNote,
@@ -81,8 +82,12 @@ export default function TopicStudyNotesScreen() {
         topic,
         analysisId,
         subject,
-        unit,
-        frequency,
+        unit: unit || moduleName,
+        frequency: frequency ?? occurrenceCount,
+        occurrenceCount,
+        paperCount,
+        totalMarks,
+        priority,
         regenerate: false,
       });
     } catch (err) {
@@ -90,7 +95,20 @@ export default function TopicStudyNotesScreen() {
     } finally {
       setInitialized(true);
     }
-  }, [topic, analysisId, subject, unit, frequency, generateTopicNotes, showSnackbar]);
+  }, [
+    topic,
+    analysisId,
+    subject,
+    unit,
+    moduleName,
+    frequency,
+    occurrenceCount,
+    paperCount,
+    totalMarks,
+    priority,
+    generateTopicNotes,
+    showSnackbar,
+  ]);
 
   useEffect(() => {
     clearTopicNote();
@@ -104,8 +122,12 @@ export default function TopicStudyNotesScreen() {
         topic,
         analysisId,
         subject,
-        unit,
-        frequency,
+        unit: unit || moduleName,
+        frequency: frequency ?? occurrenceCount,
+        occurrenceCount,
+        paperCount,
+        totalMarks,
+        priority,
       });
       showSnackbar('Notes regenerated', 'success');
     } catch (err) {
@@ -205,10 +227,25 @@ export default function TopicStudyNotesScreen() {
           <Ionicons name="book" size={22} color={colors.primary} />
           <Text style={styles.title}>{topic}</Text>
         </View>
-        {unit ? <Text style={styles.unit}>{unit}</Text> : null}
-        {frequency ? (
-          <Text style={styles.freq}>Appeared {frequency} times in PYQs</Text>
+        {(subject || moduleName) ? (
+          <Text style={styles.unit}>
+            {[subject, moduleName || unit].filter(Boolean).join(' › ')}
+          </Text>
+        ) : unit ? (
+          <Text style={styles.unit}>{unit}</Text>
         ) : null}
+        <Text style={styles.freq}>
+          {[
+            priority ? `${priority.toUpperCase()} PRIORITY` : null,
+            (occurrenceCount ?? frequency)
+              ? `Asked ${occurrenceCount ?? frequency} time${(occurrenceCount ?? frequency) === 1 ? '' : 's'}`
+              : null,
+            paperCount ? `Appeared in ${paperCount} paper${paperCount === 1 ? '' : 's'}` : null,
+            totalMarks != null && totalMarks > 0 ? `Total marks: ${totalMarks}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || 'Based on previous analyzed PYQs'}
+        </Text>
         <Text style={styles.provider}>
           {providerLabel(note)}
           {note.cached ? ' · Cached' : ''}
