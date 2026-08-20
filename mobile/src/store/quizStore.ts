@@ -11,6 +11,7 @@ import type {
   QuizSubmitResult,
   SubjectTopic,
 } from '@/domain/types';
+import { MAX_QUIZ_GENERATE_TOPICS } from '@/domain/types';
 
 interface QuizState {
   quizzes: Quiz[];
@@ -118,7 +119,31 @@ export const useQuizStore = create<QuizState>((set, get) => ({
   generateQuiz: async (params) => {
     set({ isGenerating: true, error: null });
     try {
-      const { data } = await quizApi.generate(params);
+      // Cap topics: backend schema historically rejected >30 (HTTP 422 → "Invalid request").
+      const topics = (params.topics ?? [])
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .slice(0, MAX_QUIZ_GENERATE_TOPICS);
+      const payload: QuizGenerateParams = {
+        ...params,
+        subject: params.subject.trim(),
+        topics,
+        // Omit empty optional ids so they are not sent as ""
+        analysis_id: params.analysis_id?.trim() || undefined,
+        notes_id: params.notes_id?.trim() || undefined,
+      };
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.log('[Quiz] generate payload', {
+          subject: payload.subject,
+          topicCount: payload.topics?.length ?? 0,
+          analysis_id: payload.analysis_id ?? null,
+          quiz_type: payload.quiz_type,
+          difficulty: payload.difficulty,
+          num_questions: payload.num_questions,
+        });
+      }
+      const { data } = await quizApi.generate(payload);
       const quiz = data.data;
       set({
         activeQuiz: quiz,
@@ -127,6 +152,10 @@ export const useQuizStore = create<QuizState>((set, get) => ({
       });
       return quiz;
     } catch (error) {
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn('[Quiz] generate failed', getErrorMessage(error), error);
+      }
       set({ error: getErrorMessage(error), isGenerating: false });
       throw error;
     }

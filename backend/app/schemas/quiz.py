@@ -1,9 +1,15 @@
 from datetime import datetime
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.models.enums import QuizDifficulty, QuizType
 from app.schemas.common import BaseSchema
+
+# QuizService already keeps at most ~25 topics for the LLM prompt.
+# Subject topic lists (esp. after syllabus module expansion) are often longer;
+# reject-on-length caused HTTP 422 "Request validation failed" / Invalid request.
+_MAX_QUIZ_TOPICS = 30
 
 
 class QuizQuestion(BaseSchema):
@@ -20,12 +26,21 @@ class QuizGenerateRequest(BaseSchema):
     subject: str = Field(..., min_length=1, max_length=120)
     notes_id: str | None = None
     analysis_id: str | None = None
-    topics: list[str] = Field(default_factory=list, max_length=30)
+    topics: list[str] = Field(default_factory=list)
     title: str | None = Field(default=None, max_length=200)
     quiz_type: QuizType = QuizType.MIXED
     difficulty: QuizDifficulty = QuizDifficulty.MEDIUM
     num_questions: int = Field(default=10, ge=1, le=50)
     time_limit_minutes: int | None = Field(default=None, ge=1, le=180)
+
+    @field_validator("topics", mode="before")
+    @classmethod
+    def truncate_topics(cls, value: Any) -> Any:
+        """Accept long subject topic lists; keep highest-priority prefix (caller order)."""
+        if not isinstance(value, list):
+            return value
+        cleaned = [str(t).strip() for t in value if t is not None and str(t).strip()]
+        return cleaned[:_MAX_QUIZ_TOPICS]
 
 
 class QuizAnswerSubmit(BaseSchema):

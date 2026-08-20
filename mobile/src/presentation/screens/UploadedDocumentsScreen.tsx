@@ -192,9 +192,16 @@ export default function UploadedDocumentsScreen() {
 
       <View style={styles.footer}>
         <AppButton
-          label="Upload Documents"
-          onPress={() => navigation.navigate('UploadPYQ')}
+          label="Upload PYQs"
+          onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'pyq' })}
           icon="cloud-upload-outline"
+        />
+        <AppButton
+          label="Upload Syllabus"
+          mode="outlined"
+          onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'syllabus' })}
+          icon="book-outline"
+          style={styles.footerSecondary}
         />
       </View>
       </View>
@@ -331,5 +338,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.background,
+    gap: spacing.sm,
+  },
+  footerSecondary: {
+    marginTop: 0,
   },
 });

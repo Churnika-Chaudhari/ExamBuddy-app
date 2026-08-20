@@ -115,7 +115,16 @@ export default function ProfileScreen() {
       </AppCard>
 
       <AppCard style={styles.menuCard}>
-        <MenuItem icon="cloud-upload-outline" label="Upload PYQ" onPress={() => navigation.navigate('UploadPYQ')} />
+        <MenuItem
+          icon="cloud-upload-outline"
+          label="Upload PYQs"
+          onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'pyq' })}
+        />
+        <MenuItem
+          icon="book-outline"
+          label="Upload Syllabus"
+          onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'syllabus' })}
+        />
         <MenuItem icon="documents-outline" label="Uploaded Documents" onPress={() => navigation.navigate('UploadedDocuments')} />
         <MenuItem icon="book-outline" label="My Notes" onPress={() => navigation.navigate('Main', { screen: 'Notes' })} />
       </AppCard>

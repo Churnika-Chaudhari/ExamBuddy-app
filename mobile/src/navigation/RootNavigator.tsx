@@ -41,7 +41,14 @@ export default function RootNavigator() {
       <Stack.Screen
         name="UploadPYQ"
         component={UploadPYQScreen}
-        options={{ title: 'Upload Documents' }}
+        options={({ route }) => ({
+          title:
+            route.params?.initialCategory === 'syllabus'
+              ? 'Upload Syllabus'
+              : route.params?.initialCategory === 'pyq'
+                ? 'Upload PYQs'
+                : 'Upload Documents',
+        })}
       />
       <Stack.Screen
         name="UploadedDocuments"

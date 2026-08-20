@@ -24,12 +24,28 @@ export const tokenStorage = {
   },
 };
 
+function sanitizeLogBody(data: unknown): unknown {
+  if (!data || typeof data !== 'object') return data;
+  const clone = { ...(data as Record<string, unknown>) };
+  for (const key of Object.keys(clone)) {
+    const lower = key.toLowerCase();
+    if (lower.includes('password') || lower.includes('token') || lower.includes('secret') || lower.includes('authorization')) {
+      clone[key] = '[redacted]';
+    }
+  }
+  return clone;
+}
+
 function logRequest(config: InternalAxiosRequestConfig) {
   if (!__DEV__) return;
   const method = (config.method ?? 'GET').toUpperCase();
   const url = `${config.baseURL ?? ''}${config.url ?? ''}`;
   // eslint-disable-next-line no-console
-  console.log(`[API] → ${method} ${url}`);
+  console.log(`[API] → ${method} ${url}`, {
+    hasAuth: Boolean(config.headers?.Authorization),
+    contentType: config.headers?.['Content-Type'] ?? config.headers?.['content-type'],
+    payload: sanitizeLogBody(config.data),
+  });
 }
 
 function logResponse(status: number, config?: InternalAxiosRequestConfig, body?: unknown) {
@@ -43,12 +59,21 @@ function logError(error: AxiosError) {
   if (!__DEV__) return;
   const method = (error.config?.method ?? 'GET').toUpperCase();
   const url = `${error.config?.baseURL ?? ''}${error.config?.url ?? ''}`;
+  let requestPayload: unknown = error.config?.data;
+  if (typeof requestPayload === 'string') {
+    try {
+      requestPayload = JSON.parse(requestPayload);
+    } catch {
+      /* keep raw */
+    }
+  }
   // eslint-disable-next-line no-console
   console.warn(`[API] ✗ ${method} ${url}`, {
-    code: error.code,
     status: error.response?.status,
+    code: error.code,
     message: error.message,
-    data: error.response?.data,
+    requestPayload: sanitizeLogBody(requestPayload),
+    backendResponse: error.response?.data,
   });
 }
 
@@ -154,7 +179,24 @@ export function getErrorMessage(error: unknown): string {
     }
 
     if (ax.response?.status === 422) {
-      return ax.response.data?.error?.message ?? 'Invalid request data.';
+      const apiMsg = ax.response.data?.error?.message;
+      const details = ax.response.data?.error?.details;
+      if (Array.isArray(details) && details.length > 0) {
+        const parts = details
+          .map((d: unknown) => {
+            const row = d as { loc?: unknown[]; msg?: string };
+            const loc = Array.isArray(row.loc)
+              ? row.loc.filter((x) => x !== 'body' && x !== 'query').join('.')
+              : '';
+            const msg = row.msg ?? '';
+            return loc ? `${loc}: ${msg}` : msg;
+          })
+          .filter(Boolean);
+        if (parts.length) {
+          return `${apiMsg ?? 'Invalid request'}: ${parts.join('; ')}`;
+        }
+      }
+      return apiMsg ?? 'Invalid request data.';
     }
 
     if (ax.response?.status === 500) {

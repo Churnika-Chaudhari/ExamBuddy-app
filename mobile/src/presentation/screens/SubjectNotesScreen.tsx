@@ -11,6 +11,7 @@ import { getErrorMessage } from '@/data/api/client';
 import { subjectsApi } from '@/data/api/endpoints';
 import type { SubjectModule, SubjectOverview } from '@/domain/types';
 import type { RootStackParamList } from '@/navigation/types';
+import AppButton from '@/presentation/components/AppButton';
 import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
 import ScreenWrapper from '@/presentation/components/ScreenWrapper';
@@ -159,11 +160,19 @@ export default function SubjectNotesScreen() {
       <Text style={styles.sectionTitle}>Modules</Text>
 
       {modules.length === 0 ? (
-        <EmptyState
-          icon="documents-outline"
-          title="No modules yet"
-          subtitle="Upload a syllabus and analyze PYQs for this subject."
-        />
+        <View>
+          <EmptyState
+            icon="documents-outline"
+            title="No modules yet"
+            subtitle="Upload a syllabus PDF, then analyze PYQs for this subject."
+          />
+          <AppButton
+            label="Upload Syllabus"
+            onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'syllabus' })}
+            icon="book-outline"
+            style={styles.uploadSyllabusBtn}
+          />
+        </View>
       ) : (
         modules.map((mod) => (
           <Pressable key={mod.module_id} onPress={() => openModule(mod)}>
@@ -261,4 +270,5 @@ const styles = StyleSheet.create({
   moduleMeta: { flex: 1, minWidth: 0 },
   moduleName: { ...typography.label, color: colors.text },
   moduleStats: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  uploadSyllabusBtn: { marginTop: spacing.md, marginBottom: spacing.lg },
 });

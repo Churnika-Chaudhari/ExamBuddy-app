@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Text, Chip, SegmentedButtons, TextInput } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -21,6 +22,7 @@ import { useUIStore } from '@/store/uiStore';
 import { mergeFiles, pickMultiplePdfs } from '@/utils/pickDocuments';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'UploadPYQ'>;
+type Route = RouteProp<RootStackParamList, 'UploadPYQ'>;
 
 type DocCategory = 'pyq' | 'syllabus';
 
@@ -32,7 +34,7 @@ const CATEGORY_COPY: Record<DocCategory, { heading: string; desc: string; noun: 
   },
   syllabus: {
     heading: 'Upload Syllabus',
-    desc: 'Upload a syllabus for one subject or a combined multi-subject syllabus. Topics from your PYQs will be matched to it.',
+    desc: 'Upload a syllabus PDF for one subject or a combined multi-subject syllabus. Module/topic structure is extracted so Notes can show Subject → Module → Topic.',
     noun: 'syllabus PDF',
   },
 };
@@ -55,15 +57,29 @@ function buildTitle(files: PickedFile[], category: DocCategory): string {
 
 export default function UploadPYQScreen() {
   const navigation = useNavigation<Nav>();
+  const route = useRoute<Route>();
+  const initialCategory = route.params?.initialCategory ?? 'pyq';
   const { uploadDocuments, isUploading, uploadProgress } = useDocumentStore();
   const { createAnalysis, pollAnalysis } = useAnalysisStore();
   const showSnackbar = useUIStore((s) => s.showSnackbar);
 
   const [files, setFiles] = useState<PickedFile[]>([]);
-  const [category, setCategory] = useState<DocCategory>('pyq');
+  const [category, setCategory] = useState<DocCategory>(initialCategory);
   const [subject, setSubject] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  // Dedicated Dashboard/Profile buttons open this screen with a fixed mode.
+  useEffect(() => {
+    const next = route.params?.initialCategory;
+    if (next === 'pyq' || next === 'syllabus') {
+      setCategory(next);
+      setFiles([]);
+      navigation.setOptions({
+        title: next === 'syllabus' ? 'Upload Syllabus' : 'Upload PYQs',
+      });
+    }
+  }, [route.params?.initialCategory, navigation]);
 
   const atLimit = files.length >= MAX_PYQ_FILES;
   const copy = CATEGORY_COPY[category];

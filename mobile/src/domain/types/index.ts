@@ -337,6 +337,9 @@ export interface QuizAnalysis {
   topic_strength_distribution: TopicPerformance[];
 }
 
+/** Must stay aligned with backend QuizGenerateRequest topic cap. */
+export const MAX_QUIZ_GENERATE_TOPICS = 30;
+
 export interface QuizGenerateParams {
   subject: string;
   analysis_id?: string;

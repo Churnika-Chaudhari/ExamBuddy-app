@@ -23,19 +23,28 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 const QUICK_ACTIONS = [
   {
-    key: 'upload',
+    key: 'upload-pyq',
     title: 'Upload PYQs',
-    desc: 'Upload question papers',
+    desc: 'Question papers',
     icon: 'cloud-upload-outline' as const,
     color: colors.primary,
     bg: colors.primaryLight,
-    onPress: (nav: Nav) => nav.navigate('UploadPYQ'),
+    onPress: (nav: Nav) => nav.navigate('UploadPYQ', { initialCategory: 'pyq' }),
+  },
+  {
+    key: 'upload-syllabus',
+    title: 'Upload Syllabus',
+    desc: 'Subject modules & topics',
+    icon: 'book-outline' as const,
+    color: colors.primaryDark,
+    bg: colors.primaryLight,
+    onPress: (nav: Nav) => nav.navigate('UploadPYQ', { initialCategory: 'syllabus' }),
   },
   {
     key: 'notes',
     title: 'Generate Notes',
     desc: 'AI study notes',
-    icon: 'book-outline' as const,
+    icon: 'document-text-outline' as const,
     color: colors.warning,
     bg: colors.warningLight,
     onPress: (nav: Nav) => nav.navigate('Main', { screen: 'Notes' }),
@@ -48,15 +57,6 @@ const QUICK_ACTIONS = [
     color: colors.success,
     bg: colors.successLight,
     onPress: (nav: Nav) => nav.navigate('Main', { screen: 'Quiz' }),
-  },
-  {
-    key: 'analytics',
-    title: 'View Analytics',
-    desc: 'Quiz performance',
-    icon: 'analytics-outline' as const,
-    color: colors.primaryDark,
-    bg: colors.primaryLight,
-    onPress: (nav: Nav) => nav.navigate('QuizHistory'),
   },
 ];
 
@@ -219,8 +219,15 @@ export default function DashboardScreen() {
               />
               <AppButton
                 label="Upload PYQs"
-                onPress={() => navigation.navigate('UploadPYQ')}
+                onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'pyq' })}
                 icon="cloud-upload-outline"
+                style={styles.emptyCta}
+              />
+              <AppButton
+                label="Upload Syllabus"
+                mode="outlined"
+                onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'syllabus' })}
+                icon="book-outline"
                 style={styles.emptyCta}
               />
             </View>

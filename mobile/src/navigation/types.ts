@@ -16,7 +16,8 @@ export type RootStackParamList = {
   Splash: undefined;
   Auth: NavigatorScreenParams<AuthStackParamList>;
   Main: NavigatorScreenParams<MainTabParamList>;
-  UploadPYQ: undefined;
+  /** Dedicated upload entry — pass initialCategory to open PYQ or Syllabus mode. */
+  UploadPYQ: { initialCategory?: 'pyq' | 'syllabus' } | undefined;
   UploadedDocuments: undefined;
   DocumentViewer: { documentId: string; title: string; fileUrl: string };
   AnalysisResult: { analysisId: string };
