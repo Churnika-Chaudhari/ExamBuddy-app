@@ -192,9 +192,9 @@ export default function UploadedDocumentsScreen() {
 
       <View style={styles.footer}>
         <AppButton
-          label="Upload PYQs"
+          label="Analyze PYQ"
           onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'pyq' })}
-          icon="cloud-upload-outline"
+          icon="analytics-outline"
         />
         <AppButton
           label="Upload Syllabus"

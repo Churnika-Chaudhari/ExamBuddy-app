@@ -46,7 +46,7 @@ export default function RootNavigator() {
             route.params?.initialCategory === 'syllabus'
               ? 'Upload Syllabus'
               : route.params?.initialCategory === 'pyq'
-                ? 'Upload PYQs'
+                ? 'Analyze PYQ'
                 : 'Upload Documents',
         })}
       />

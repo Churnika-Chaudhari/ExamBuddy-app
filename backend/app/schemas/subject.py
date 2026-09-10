@@ -48,6 +48,7 @@ class SubjectModuleItem(BaseSchema):
     high_priority_count: int = 0
     question_occurrence: int = 0
     topics: list[SubjectTopicItem] = Field(default_factory=list)
+    pyq_topics: list[SubjectTopicItem] = Field(default_factory=list)
 
 
 class SubjectTopicsResponse(BaseSchema):
@@ -60,3 +61,20 @@ class SubjectTopicsResponse(BaseSchema):
     analysis_ids: list[str] = Field(default_factory=list)
     analyzed_paper_count: int = 0
     priority_summary: dict[str, int] = Field(default_factory=dict)
+
+
+class SubjectPyqFilterRequest(BaseSchema):
+    module_ids: list[str] = Field(default_factory=list)
+    include_unmapped: bool | None = None
+
+
+class SubjectPyqFilterResponse(BaseSchema):
+    subject_id: str
+    subject: str
+    modules: list[SubjectModuleItem] = Field(default_factory=list)
+    topics: list[SubjectTopicItem] = Field(default_factory=list)
+    selected_module_ids: list[str] = Field(default_factory=list)
+    empty_modules: list[str] = Field(default_factory=list)
+    all_modules: bool = False
+    analysis_ids: list[str] = Field(default_factory=list)
+    analyzed_paper_count: int = 0

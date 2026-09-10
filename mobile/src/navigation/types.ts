@@ -25,8 +25,9 @@ export type RootStackParamList = {
   ModuleTopics: {
     subjectId: string;
     subjectName: string;
-    moduleId: string;
-    moduleName: string;
+    moduleId?: string;
+    moduleIds?: string[];
+    moduleName?: string;
     moduleNumber?: number | null;
     analysisIds?: string[];
   };

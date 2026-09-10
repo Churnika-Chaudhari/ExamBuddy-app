@@ -218,7 +218,7 @@ class SubjectService:
             if level in priority_summary:
                 priority_summary[level] += 1
 
-        return {
+        payload = {
             "subject_id": str(subject_doc["_id"]),
             "subject": subject_name,
             "topics": topics,
@@ -228,6 +228,37 @@ class SubjectService:
             "analysis_ids": analysis_ids,
             "analyzed_paper_count": len(subject_analyses),
             "priority_summary": priority_summary,
+        }
+        return payload
+
+    async def filter_subject_pyq(
+        self,
+        user_id: str,
+        subject_id: str,
+        module_ids: str | list[str] | None = None,
+        include_unmapped: bool | None = None,
+    ) -> dict[str, Any]:
+        """Return topics/PYQs whose module_id is in the selected list (one request)."""
+        from app.utils.module_filter import filter_module_tree, parse_module_ids
+
+        topics_data = await self.get_subject_topics(user_id, subject_id)
+        selected = parse_module_ids(module_ids)
+        filtered = filter_module_tree(
+            modules=topics_data.get("modules") or [],
+            topics=topics_data.get("topics") or [],
+            selected_ids=selected or None,
+            include_unmapped=include_unmapped,
+        )
+        return {
+            "subject_id": topics_data["subject_id"],
+            "subject": topics_data["subject"],
+            "modules": filtered["modules"],
+            "topics": filtered["topics"],
+            "selected_module_ids": filtered["selected_module_ids"],
+            "empty_modules": filtered["empty_modules"],
+            "all_modules": filtered["all_modules"],
+            "analysis_ids": topics_data.get("analysis_ids") or [],
+            "analyzed_paper_count": topics_data.get("analyzed_paper_count") or 0,
         }
 
     async def get_subject_overview(self, user_id: str, subject_id: str) -> dict[str, Any]:

@@ -15,6 +15,7 @@ import type {
   QuizSubject,
   QuizSubmitResult,
   SubjectOverview,
+  SubjectPyqFilter,
   SubjectTopic,
   User,
 } from '@/domain/types';
@@ -220,6 +221,14 @@ export const subjectsApi = {
 
   getOverview: (subjectId: string) =>
     apiClient.get<ApiResponse<SubjectOverview>>(`/subjects/${subjectId}/overview`),
+
+  filterPyq: (subjectId: string, moduleIds?: string[], includeUnmapped?: boolean) =>
+    apiClient.get<ApiResponse<SubjectPyqFilter>>(`/subjects/${subjectId}/pyq`, {
+      params: {
+        module_ids: moduleIds?.length ? moduleIds.join(',') : undefined,
+        include_unmapped: includeUnmapped,
+      },
+    }),
 
   delete: (subjectId: string) =>
     apiClient.delete<ApiResponse<{ message: string }>>(`/subjects/${subjectId}`),

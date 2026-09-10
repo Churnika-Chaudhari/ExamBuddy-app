@@ -266,6 +266,7 @@ export interface SubjectModule {
   high_priority_count?: number;
   question_occurrence?: number;
   topics: SubjectTopic[];
+  pyq_topics?: SubjectTopic[];
 }
 
 export interface SubjectSourceDocument {
@@ -292,6 +293,18 @@ export interface SubjectOverview {
   syllabus_count?: number;
   study_material_count: number;
   total_sources: number;
+}
+
+export interface SubjectPyqFilter {
+  subject_id: string;
+  subject: string;
+  modules: SubjectModule[];
+  topics: SubjectTopic[];
+  selected_module_ids: string[];
+  empty_modules: string[];
+  all_modules: boolean;
+  analysis_ids: string[];
+  analyzed_paper_count?: number;
 }
 
 export interface TopicPerformance {

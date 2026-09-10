@@ -28,8 +28,8 @@ type DocCategory = 'pyq' | 'syllabus';
 
 const CATEGORY_COPY: Record<DocCategory, { heading: string; desc: string; noun: string }> = {
   pyq: {
-    heading: 'Upload PYQ Papers',
-    desc: 'Select previous-year question papers to analyze and extract topics.',
+    heading: 'Analyze PYQ',
+    desc: 'Upload previous-year question papers. After analysis you can filter results by one or more syllabus modules.',
     noun: 'paper',
   },
   syllabus: {
@@ -76,7 +76,7 @@ export default function UploadPYQScreen() {
       setCategory(next);
       setFiles([]);
       navigation.setOptions({
-        title: next === 'syllabus' ? 'Upload Syllabus' : 'Upload PYQs',
+        title: next === 'syllabus' ? 'Upload Syllabus' : 'Analyze PYQ',
       });
     }
   }, [route.params?.initialCategory, navigation]);
@@ -218,16 +218,18 @@ export default function UploadPYQScreen() {
       <Text style={styles.heading}>{copy.heading}</Text>
       <Text style={styles.desc}>{copy.desc}</Text>
 
-      <SegmentedButtons
-        value={category}
-        onValueChange={(v) => setCategory(v as DocCategory)}
-        density="small"
-        style={styles.segmented}
-        buttons={[
-          { value: 'pyq', label: 'PYQ', icon: 'file-document-outline' },
-          { value: 'syllabus', label: 'Syllabus', icon: 'book-education-outline' },
-        ]}
-      />
+      {!route.params?.initialCategory ? (
+        <SegmentedButtons
+          value={category}
+          onValueChange={(v) => setCategory(v as DocCategory)}
+          density="small"
+          style={styles.segmented}
+          buttons={[
+            { value: 'pyq', label: 'PYQ', icon: 'file-document-outline' },
+            { value: 'syllabus', label: 'Syllabus', icon: 'book-education-outline' },
+          ]}
+        />
+      ) : null}
 
       <TextInput
         mode="outlined"

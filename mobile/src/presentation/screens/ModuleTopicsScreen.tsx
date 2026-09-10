@@ -73,11 +73,25 @@ function sortTopics(topics: SubjectTopic[], mode: SortMode): SubjectTopic[] {
 export default function ModuleTopicsScreen() {
   const route = useRoute<Route>();
   const navigation = useNavigation<Nav>();
-  const { subjectId, subjectName, moduleId, moduleName, moduleNumber, analysisIds } = route.params;
+  const {
+    subjectId,
+    subjectName,
+    moduleId,
+    moduleIds,
+    moduleName,
+    moduleNumber,
+    analysisIds,
+  } = route.params;
   const showSnackbar = useUIStore((s) => s.showSnackbar);
+
+  const selectedModuleIds =
+    moduleIds?.length ? moduleIds : moduleId ? [moduleId] : [];
+  const isMulti = selectedModuleIds.length !== 1;
 
   const [overview, setOverview] = useState<SubjectOverview | null>(null);
   const [module, setModule] = useState<SubjectModule | null>(null);
+  const [groupedModules, setGroupedModules] = useState<SubjectModule[]>([]);
+  const [emptyModules, setEmptyModules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<PriorityFilter>('All');
@@ -86,46 +100,84 @@ export default function ModuleTopicsScreen() {
 
   const load = useCallback(async () => {
     try {
-      const { data } = await subjectsApi.getOverview(subjectId);
-      const ov = data.data;
-      setOverview(ov);
-      const found =
-        ov.modules?.find((m) => m.module_id === moduleId) ||
-        ({
-          module_id: moduleId,
-          module_name: moduleName,
-          display_name: moduleName,
-          module_number: moduleNumber,
-          topics: (ov.topics || []).filter(
-            (t) => t.module_id === moduleId || (t.unit || '').includes(moduleName)
-          ),
-          topic_count: 0,
-        } as SubjectModule);
-      if (!found.topic_count) found.topic_count = found.topics?.length || 0;
-      setModule(found);
-      navigation.setOptions({ title: found.display_name || moduleName || 'Module Topics' });
+      if (isMulti) {
+        const { data } = await subjectsApi.filterPyq(
+          subjectId,
+          selectedModuleIds.length ? selectedModuleIds : undefined
+        );
+        const payload = data.data;
+        setOverview({
+          subject_id: payload.subject_id,
+          subject: payload.subject,
+          topics: payload.topics,
+          modules: payload.modules,
+          analysis_ids: payload.analysis_ids,
+          source_documents: [],
+          pyq_count: 0,
+          notes_count: 0,
+          study_material_count: 0,
+          total_sources: 0,
+          analyzed_paper_count: payload.analyzed_paper_count,
+        });
+        setGroupedModules(payload.modules);
+        setEmptyModules(payload.empty_modules);
+        setModule(null);
+        navigation.setOptions({
+          title: payload.all_modules ? 'All Modules' : 'Filtered Modules',
+        });
+      } else {
+        const { data } = await subjectsApi.getOverview(subjectId);
+        const ov = data.data;
+        setOverview(ov);
+        const targetId = selectedModuleIds[0];
+        const found =
+          ov.modules?.find((m) => m.module_id === targetId) ||
+          ({
+            module_id: targetId,
+            module_name: moduleName || 'Module',
+            display_name: moduleName || 'Module',
+            module_number: moduleNumber,
+            topics: (ov.topics || []).filter(
+              (t) => t.module_id === targetId || (t.unit || '').includes(moduleName || '')
+            ),
+            topic_count: 0,
+          } as SubjectModule);
+        if (!found.topic_count) found.topic_count = found.topics?.length || 0;
+        setModule(found);
+        setGroupedModules([]);
+        navigation.setOptions({ title: found.display_name || moduleName || 'Module Topics' });
+      }
     } catch (err) {
       showSnackbar(getErrorMessage(err), 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [subjectId, moduleId, moduleName, moduleNumber, navigation, showSnackbar]);
+  }, [
+    isMulti,
+    subjectId,
+    selectedModuleIds.join('|'),
+    moduleName,
+    moduleNumber,
+    navigation,
+    showSnackbar,
+  ]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const openTopic = (t: SubjectTopic) => {
+  const openTopic = (t: SubjectTopic, fromModule?: SubjectModule | null) => {
     if (!overview) return;
+    const current = fromModule || module;
     const occ = occurrenceOf(t);
     navigation.navigate('TopicStudyNotes', {
       topic: topicLabel(t),
       subject: overview.subject || subjectName,
       analysisId: t.analysis_ids?.[0] || analysisIds?.[0] || overview.analysis_ids[0],
-      unit: t.unit || module?.display_name || moduleName,
-      moduleName: module?.display_name || moduleName,
-      moduleNumber: module?.module_number ?? moduleNumber,
+      unit: t.unit || current?.display_name || moduleName,
+      moduleName: current?.display_name || moduleName,
+      moduleNumber: current?.module_number ?? moduleNumber,
       frequency: occ || undefined,
       occurrenceCount: occ || undefined,
       paperCount: paperCountOf(t) || undefined,
@@ -163,7 +215,108 @@ export default function ModuleTopicsScreen() {
     );
   }
 
-  if (!module || !overview) {
+  if (!overview || (!isMulti && !module)) {
+    return (
+      <View style={styles.centered}>
+        <EmptyState icon="alert-circle-outline" title="Module not found" subtitle="Go back and try again." />
+      </View>
+    );
+  }
+
+  if (isMulti) {
+    const q = search.trim().toLowerCase();
+    return (
+      <ScreenWrapper
+        refreshing={refreshing}
+        onRefresh={() => {
+          setRefreshing(true);
+          load();
+        }}
+      >
+        <Text style={styles.breadcrumb}>
+          {overview.subject} › {selectedModuleIds.length} module
+          {selectedModuleIds.length === 1 ? '' : 's'}
+        </Text>
+        <Text style={styles.subtitle}>
+          PYQs and topics from the selected modules only. Duplicates are removed.
+        </Text>
+        {emptyModules.length > 0 ? (
+          <Text style={styles.emptyBanner}>
+            No PYQs in: {emptyModules.join(', ')}
+          </Text>
+        ) : null}
+
+        <Searchbar
+          placeholder="Search topics"
+          value={search}
+          onChangeText={setSearch}
+          style={styles.search}
+          inputStyle={styles.searchInput}
+        />
+
+        {groupedModules.length === 0 ? (
+          <EmptyState
+            icon="filter-outline"
+            title="No modules selected"
+            subtitle="Go back and select at least one module, or choose All Modules."
+          />
+        ) : (
+          groupedModules.map((mod) => {
+            const pyqTopics = (mod.pyq_topics?.length ? mod.pyq_topics : (mod.topics || []).filter((t) => occurrenceOf(t) > 0))
+              .filter((t) => !q || topicLabel(t).toLowerCase().includes(q));
+            const otherTopics = (mod.topics || [])
+              .filter((t) => occurrenceOf(t) === 0)
+              .filter((t) => !q || topicLabel(t).toLowerCase().includes(q));
+            const label = mod.display_name || mod.module_name;
+            return (
+              <View key={mod.module_id} style={styles.groupBlock}>
+                <Text style={styles.groupTitle}>{label.toUpperCase()}</Text>
+                {pyqTopics.length === 0 ? (
+                  <Text style={styles.emptyModule}>No PYQs found for {label}.</Text>
+                ) : (
+                  pyqTopics.map((t, idx) => {
+                    const priority = topicPriority(t);
+                    const meta = PRIORITY_META[priority];
+                    const occ = occurrenceOf(t);
+                    return (
+                      <Pressable key={`${mod.module_id}-${topicLabel(t)}-${idx}`} onPress={() => openTopic(t, mod)}>
+                        <AppCard style={styles.topicCard}>
+                          <View style={[styles.priorityBadge, { backgroundColor: meta.bg }]}>
+                            <Ionicons name={meta.icon} size={14} color={meta.color} />
+                            <Text style={[styles.priorityBadgeText, { color: meta.color }]}>
+                              {meta.label}
+                            </Text>
+                          </View>
+                          <View style={styles.topicRow}>
+                            <View style={styles.topicMeta}>
+                              <Text style={styles.topicName} numberOfLines={2}>
+                                {topicLabel(t)}
+                              </Text>
+                              <Text style={styles.topicFreq}>
+                                Asked {occ} time{occ === 1 ? '' : 's'}
+                              </Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                          </View>
+                        </AppCard>
+                      </Pressable>
+                    );
+                  })
+                )}
+                {otherTopics.length > 0 ? (
+                  <Text style={styles.otherHint}>
+                    {otherTopics.length} syllabus topic{otherTopics.length === 1 ? '' : 's'} not asked in PYQs
+                  </Text>
+                ) : null}
+              </View>
+            );
+          })
+        )}
+      </ScreenWrapper>
+    );
+  }
+
+  if (!module) {
     return (
       <View style={styles.centered}>
         <EmptyState icon="alert-circle-outline" title="Module not found" subtitle="Go back and try again." />
@@ -305,6 +458,29 @@ const styles = StyleSheet.create({
   },
   breadcrumb: { ...typography.label, color: colors.primary, marginBottom: spacing.xs },
   subtitle: { ...typography.bodySmall, color: colors.textSecondary, marginBottom: spacing.md },
+  emptyBanner: {
+    ...typography.caption,
+    color: colors.warning,
+    marginBottom: spacing.sm,
+  },
+  groupBlock: { marginBottom: spacing.md },
+  groupTitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    marginBottom: spacing.sm,
+  },
+  emptyModule: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+    marginBottom: spacing.sm,
+  },
+  otherHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
   infoCard: {
     padding: spacing.md,
     marginBottom: spacing.md,

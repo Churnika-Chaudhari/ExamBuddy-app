@@ -14,6 +14,7 @@ import type { RootStackParamList } from '@/navigation/types';
 import AppButton from '@/presentation/components/AppButton';
 import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
+import ModuleMultiSelect from '@/presentation/components/ModuleMultiSelect';
 import ScreenWrapper from '@/presentation/components/ScreenWrapper';
 import { useUIStore } from '@/store/uiStore';
 
@@ -47,12 +48,20 @@ export default function SubjectNotesScreen() {
   const [overview, setOverview] = useState<SubjectOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [includeUnmapped, setIncludeUnmapped] = useState(true);
+  const [filterError, setFilterError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const { data } = await subjectsApi.getOverview(subjectId);
       setOverview(data.data);
       navigation.setOptions({ title: data.data.subject || subjectName || 'Subject Notes' });
+      const mods = data.data.modules ?? [];
+      if (mods.length) {
+        setSelectedIds(mods.map((m) => m.module_id));
+        setIncludeUnmapped(mods.some((m) => m.is_unmapped));
+      }
     } catch (err) {
       showSnackbar(getErrorMessage(err), 'error');
     } finally {
@@ -71,8 +80,32 @@ export default function SubjectNotesScreen() {
       subjectId: overview.subject_id,
       subjectName: overview.subject,
       moduleId: mod.module_id,
+      moduleIds: [mod.module_id],
       moduleName: mod.display_name || mod.module_name,
       moduleNumber: mod.module_number,
+      analysisIds: overview.analysis_ids,
+    });
+  };
+
+  const applyModuleFilter = () => {
+    if (!overview) return;
+    const ids = selectedIds.filter((id) => {
+      if (id === 'm_unmapped') return includeUnmapped;
+      return true;
+    });
+    if (!ids.length && !includeUnmapped) {
+      setFilterError('Select at least one module, or choose All Modules.');
+      return;
+    }
+    setFilterError(null);
+    const first = overview.modules?.find((m) => ids.includes(m.module_id));
+    navigation.navigate('ModuleTopics', {
+      subjectId: overview.subject_id,
+      subjectName: overview.subject,
+      moduleId: first?.module_id,
+      moduleIds: ids,
+      moduleName: first?.display_name || first?.module_name,
+      moduleNumber: first?.module_number,
       analysisIds: overview.analysis_ids,
     });
   };
@@ -158,6 +191,24 @@ export default function SubjectNotesScreen() {
       ) : null}
 
       <Text style={styles.sectionTitle}>Modules</Text>
+      <Text style={styles.sectionHint}>
+        Tap one module for a single-module view, or select several and apply the filter.
+      </Text>
+
+      {modules.length > 1 ? (
+        <ModuleMultiSelect
+          modules={modules}
+          selectedIds={selectedIds}
+          onChange={(ids) => {
+            setSelectedIds(ids);
+            setFilterError(null);
+          }}
+          includeUnmapped={includeUnmapped}
+          onIncludeUnmappedChange={setIncludeUnmapped}
+          onApply={applyModuleFilter}
+          error={filterError}
+        />
+      ) : null}
 
       {modules.length === 0 ? (
         <View>
@@ -224,6 +275,11 @@ const styles = StyleSheet.create({
   title: { ...typography.h2, color: colors.text, flex: 1 },
   subtitle: { ...typography.bodySmall, color: colors.textSecondary },
   breadcrumb: { ...typography.caption, color: colors.primary, marginTop: spacing.xs },
+  sectionHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+  },
   infoCard: {
     padding: spacing.md,
     marginBottom: spacing.md,

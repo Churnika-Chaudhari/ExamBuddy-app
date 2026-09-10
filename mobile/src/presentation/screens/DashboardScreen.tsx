@@ -23,22 +23,22 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 const QUICK_ACTIONS = [
   {
-    key: 'upload-pyq',
-    title: 'Upload PYQs',
-    desc: 'Question papers',
-    icon: 'cloud-upload-outline' as const,
-    color: colors.primary,
-    bg: colors.primaryLight,
-    onPress: (nav: Nav) => nav.navigate('UploadPYQ', { initialCategory: 'pyq' }),
-  },
-  {
     key: 'upload-syllabus',
     title: 'Upload Syllabus',
-    desc: 'Subject modules & topics',
+    desc: 'Select subject, extract modules & topics',
     icon: 'book-outline' as const,
     color: colors.primaryDark,
     bg: colors.primaryLight,
     onPress: (nav: Nav) => nav.navigate('UploadPYQ', { initialCategory: 'syllabus' }),
+  },
+  {
+    key: 'analyze-pyq',
+    title: 'Analyze PYQ',
+    desc: 'Upload papers, then filter by modules',
+    icon: 'analytics-outline' as const,
+    color: colors.primary,
+    bg: colors.primaryLight,
+    onPress: (nav: Nav) => nav.navigate('UploadPYQ', { initialCategory: 'pyq' }),
   },
   {
     key: 'notes',
@@ -215,19 +215,19 @@ export default function DashboardScreen() {
               <EmptyState
                 icon="document-text-outline"
                 title="No recent activity"
-                subtitle="Start by uploading question papers using the Quick Actions section."
-              />
-              <AppButton
-                label="Upload PYQs"
-                onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'pyq' })}
-                icon="cloud-upload-outline"
-                style={styles.emptyCta}
+                subtitle="Start by uploading a syllabus, then analyze PYQs from Quick Actions."
               />
               <AppButton
                 label="Upload Syllabus"
-                mode="outlined"
                 onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'syllabus' })}
                 icon="book-outline"
+                style={styles.emptyCta}
+              />
+              <AppButton
+                label="Analyze PYQ"
+                mode="outlined"
+                onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'pyq' })}
+                icon="analytics-outline"
                 style={styles.emptyCta}
               />
             </View>
