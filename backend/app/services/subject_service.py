@@ -32,6 +32,8 @@ class SubjectService:
             "name": doc.get("name", ""),
             "pyq_count": doc.get("pyq_count", 0),
             "topic_count": doc.get("topic_count", 0),
+            "syllabus_count": doc.get("syllabus_count", 0),
+            "analyzed_paper_count": doc.get("analyzed_paper_count", 0) or doc.get("pyq_count", 0),
             "last_updated": mapped.get("last_updated") or mapped.get("updated_at"),
             "created_at": mapped.get("created_at"),
         }
@@ -56,7 +58,12 @@ class SubjectService:
             for existing in list(counts):
                 if existing.lower() == key.lower():
                     return counts[existing]
-            counts[key] = {"pyq_count": 0, "topic_count": 0}
+            counts[key] = {
+                "pyq_count": 0,
+                "topic_count": 0,
+                "syllabus_count": 0,
+                "analyzed_paper_count": 0,
+            }
             return counts[key]
 
         docs = await self.document_repo.list_by_user(
@@ -70,7 +77,39 @@ class SubjectService:
             if bucket:
                 bucket["pyq_count"] += 1
 
-        # Uploaded notes with a subject also surface in the quiz subject list.
+        syllabus_docs = await self.document_repo.list_by_user(
+            user_id, skip=0, limit=500, category="syllabus"
+        )
+        for doc in syllabus_docs:
+            subject = self._resolve_doc_subject(doc)
+            names: list[str] = []
+            if subject:
+                names.append(subject)
+            structure = doc.get("syllabus_structure") or {}
+            for n in structure.get("subject_names") or []:
+                if n:
+                    names.append(str(n))
+            seen_names: set[str] = set()
+            for raw in names:
+                bucket = _ensure(raw)
+                key = normalize_subject_name(raw)
+                if not bucket or not key or key.lower() in seen_names:
+                    continue
+                seen_names.add(key.lower())
+                bucket["syllabus_count"] += 1
+            catalog_rows = structure.get("catalog") or []
+            topics_by_subject: dict[str, set[str]] = {}
+            for row in catalog_rows:
+                if not isinstance(row, dict):
+                    continue
+                sname = normalize_subject_name(str(row.get("subject") or subject or ""))
+                tname = str(row.get("topic") or row.get("topic_name") or "").strip().lower()
+                if sname and tname:
+                    topics_by_subject.setdefault(sname, set()).add(tname)
+            for sname, tset in topics_by_subject.items():
+                bucket = _ensure(sname)
+                if bucket:
+                    bucket["topic_count"] = max(bucket["topic_count"], len(tset))
         notes_docs = await self.document_repo.list_by_user(
             user_id, skip=0, limit=500, category="notes"
         )
@@ -99,6 +138,7 @@ class SubjectService:
             bucket = _ensure(subject)
             if bucket:
                 bucket["topic_count"] = max(bucket["topic_count"], len(topics))
+                bucket["analyzed_paper_count"] = bucket.get("analyzed_paper_count", 0) + 1
                 # Ensure analyzed papers appear even when document.subject was blank.
                 if bucket["pyq_count"] == 0:
                     bucket["pyq_count"] = max(1, len(analysis.get("document_ids") or [1]))
@@ -122,6 +162,8 @@ class SubjectService:
                 name,
                 pyq_count=data["pyq_count"],
                 topic_count=data["topic_count"],
+                syllabus_count=data.get("syllabus_count", 0),
+                analyzed_paper_count=data.get("analyzed_paper_count", 0),
                 unhide=True,
             )
 
@@ -130,6 +172,13 @@ class SubjectService:
             return
         await self.subject_repo.increment_pyq(user_id, subject)
         logger.info("Subject updated on PYQ upload: %s", subject)
+
+    async def on_material_uploaded(self, user_id: str, subject: str) -> None:
+        """Ensure a subject card exists after syllabus (or other) upload."""
+        if not subject:
+            return
+        await self.subject_repo.upsert(user_id, subject, unhide=True)
+        logger.info("Subject registered from material upload: %s", subject)
 
     async def on_analysis_completed(self, user_id: str, subject: str, topic_count: int) -> None:
         if not subject:
@@ -167,7 +216,19 @@ class SubjectService:
                 continue
             a_subject = normalize_subject_name(analysis.get("subject") or "")
             if a_subject.lower() != subject_name.lower():
-                continue
+                if a_subject:
+                    continue
+                linked_match = False
+                doc_ids = [str(d) for d in (analysis.get("document_ids") or [])]
+                if doc_ids:
+                    linked = await self.document_repo.get_many_by_ids(doc_ids, user_id)
+                    for doc in linked:
+                        resolved = self._resolve_doc_subject(doc) or ""
+                        if normalize_subject_name(resolved).lower() == subject_name.lower():
+                            linked_match = True
+                            break
+                if not linked_match:
+                    continue
             subject_analyses.append(analysis)
             analysis_ids.append(str(analysis["_id"]))
 

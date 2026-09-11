@@ -22,8 +22,13 @@ class TopicNoteGenerateRequest(BaseSchema):
     topic: str = Field(min_length=1, max_length=200)
     analysis_id: str | None = None
     subject: str | None = Field(default=None, max_length=100)
+    subject_id: str | None = None
     unit: str | None = Field(default=None, max_length=100)
-    frequency: int | None = Field(default=None, ge=1)
+    module_id: str | None = None
+    module_name: str | None = Field(default=None, max_length=200)
+    module_number: int | None = None
+    topic_id: str | None = None
+    frequency: int | None = Field(default=None, ge=0)
     occurrence_count: int | None = Field(default=None, ge=0)
     paper_count: int | None = Field(default=None, ge=0)
     total_marks: float | None = Field(default=None, ge=0)
@@ -38,7 +43,12 @@ class GeneratedNoteResponse(BaseSchema):
     notes: str
     summary: str | None = None
     subject: str | None = None
+    subject_id: str | None = None
     unit: str | None = None
+    module_id: str | None = None
+    module_name: str | None = None
+    module_number: int | None = None
+    topic_id: str | None = None
     frequency: int | None = None
     analysis_id: str | None = None
     is_saved: bool = False

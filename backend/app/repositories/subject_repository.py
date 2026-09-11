@@ -14,6 +14,8 @@ class SubjectRepository(BaseRepository):
         *,
         pyq_count: int | None = None,
         topic_count: int | None = None,
+        syllabus_count: int | None = None,
+        analyzed_paper_count: int | None = None,
         unhide: bool = False,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
@@ -27,20 +29,32 @@ class SubjectRepository(BaseRepository):
             set_fields["pyq_count"] = pyq_count
         if topic_count is not None:
             set_fields["topic_count"] = topic_count
-        set_fields.setdefault("pyq_count", 0)
-        set_fields.setdefault("topic_count", 0)
+        if syllabus_count is not None:
+            set_fields["syllabus_count"] = syllabus_count
+        if analyzed_paper_count is not None:
+            set_fields["analyzed_paper_count"] = analyzed_paper_count
         if unhide:
             set_fields["hidden"] = False
+
+        set_on_insert: dict[str, Any] = {
+            "user_id": self.to_object_id(user_id),
+            "name": normalized,
+            "created_at": now,
+        }
+        if pyq_count is None:
+            set_on_insert["pyq_count"] = 0
+        if topic_count is None:
+            set_on_insert["topic_count"] = 0
+        if syllabus_count is None:
+            set_on_insert["syllabus_count"] = 0
+        if analyzed_paper_count is None:
+            set_on_insert["analyzed_paper_count"] = 0
 
         result = await self.collection.find_one_and_update(
             query,
             {
                 "$set": set_fields,
-                "$setOnInsert": {
-                    "user_id": self.to_object_id(user_id),
-                    "name": normalized,
-                    "created_at": now,
-                },
+                "$setOnInsert": set_on_insert,
             },
             upsert=True,
             return_document=True,

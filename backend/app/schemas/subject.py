@@ -10,6 +10,8 @@ class SubjectResponse(BaseSchema):
     name: str
     pyq_count: int = 0
     topic_count: int = 0
+    syllabus_count: int = 0
+    analyzed_paper_count: int = 0
     last_updated: datetime | None = None
     created_at: datetime | None = None
 

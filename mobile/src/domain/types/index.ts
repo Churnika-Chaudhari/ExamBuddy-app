@@ -118,7 +118,12 @@ export interface GeneratedTopicNote {
   notes: string;
   summary?: string | null;
   subject?: string | null;
+  subject_id?: string | null;
   unit?: string | null;
+  module_id?: string | null;
+  module_name?: string | null;
+  module_number?: number | null;
+  topic_id?: string | null;
   frequency?: number | null;
   analysis_id?: string | null;
   is_saved: boolean;
@@ -228,6 +233,8 @@ export interface QuizSubject {
   name: string;
   pyq_count: number;
   topic_count: number;
+  syllabus_count?: number;
+  analyzed_paper_count?: number;
   last_updated?: string | null;
   created_at?: string | null;
 }

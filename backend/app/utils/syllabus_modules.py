@@ -155,8 +155,18 @@ def extract_subject_modules_from_catalog(
     pref = normalize_subject_name(preferred_subject or "").lower()
     rows = list(catalog or [])
     if pref:
-        preferred = [r for r in rows if str(r.get("subject", "")).lower() == pref]
-        rows = preferred if preferred else rows
+        preferred = [
+            r
+            for r in rows
+            if normalize_subject_name(str(r.get("subject") or "")).lower() == pref
+        ]
+        if not preferred:
+            preferred = [
+                r
+                for r in rows
+                if pref in normalize_subject_name(str(r.get("subject") or "")).lower()
+            ]
+        rows = preferred
 
     modules_map: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -516,18 +526,13 @@ def build_module_topic_tree(
     for mod in modules:
         flat_topics.extend(mod.get("topics") or [])
 
+    real_modules = [
+        m for m in modules if not m.get("is_unmapped") and not m.get("is_fallback")
+    ]
     return {
         "modules": modules,
         "topics": flat_topics,  # flat list still available for backward compatibility
-        "module_count": len(
-            [m for m in modules if not m.get("is_unmapped") and not m.get("is_fallback")]
-        )
-        or len(modules),
-        "has_syllabus_modules": bool(
-            syllabus_structure
-            and (
-                (syllabus_structure.get("catalog") or syllabus_structure.get("subjects"))
-            )
-        ),
+        "module_count": len(real_modules),
+        "has_syllabus_modules": bool(real_modules),
         "needs_review": needs_review,
     }

@@ -20,12 +20,22 @@ async def create_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.notes.create_index([("user_id", 1), ("created_at", -1)])
     await db.notes.create_index([("user_id", 1), ("is_favorite", 1)])
 
-    await db.generated_notes.create_index(
-        [("user_id", 1), ("topic_key", 1), ("analysis_id", 1)],
-        unique=True,
-    )
+    try:
+        await db.generated_notes.drop_index("user_id_1_topic_key_1_analysis_id_1")
+    except Exception:
+        pass
+    try:
+        await db.generated_notes.create_index(
+            [("user_id", 1), ("topic_key", 1), ("subject", 1), ("analysis_id", 1)],
+            unique=True,
+            name="user_topic_subject_analysis_unique",
+        )
+    except Exception as exc:
+        logger.warning("Could not create unique generated_notes index: %s", exc)
     await db.generated_notes.create_index([("user_id", 1), ("updated_at", -1)])
     await db.generated_notes.create_index([("user_id", 1), ("analysis_id", 1)])
+    await db.generated_notes.create_index([("user_id", 1), ("subject", 1), ("updated_at", -1)])
+    await db.generated_notes.create_index([("user_id", 1), ("module_id", 1)])
 
     await db.subjects.create_index([("user_id", 1), ("name", 1)], unique=True)
     await db.subjects.create_index([("user_id", 1), ("last_updated", -1)])

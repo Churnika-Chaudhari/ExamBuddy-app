@@ -133,6 +133,7 @@ export default function AnalysisResultScreen() {
       subject: analysis?.subject ?? undefined,
       unit: row.unit,
       frequency: row.frequency,
+      occurrenceCount: row.frequency,
     });
   };
 

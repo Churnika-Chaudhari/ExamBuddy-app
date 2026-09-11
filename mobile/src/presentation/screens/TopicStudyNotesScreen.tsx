@@ -59,7 +59,7 @@ function providerLabel(note: {
 
 export default function TopicStudyNotesScreen() {
   const route = useRoute<Route>();
-  const { topic, analysisId, subject, unit, frequency, occurrenceCount, paperCount, totalMarks, priority, moduleName, moduleNumber } =
+  const { topic, analysisId, subject, subjectId, unit, frequency, occurrenceCount, paperCount, totalMarks, priority, moduleName, moduleNumber, moduleId, topicId } =
     route.params;
 
   const {
@@ -82,7 +82,12 @@ export default function TopicStudyNotesScreen() {
         topic,
         analysisId,
         subject,
+        subjectId,
         unit: unit || moduleName,
+        moduleId,
+        moduleName,
+        moduleNumber,
+        topicId,
         frequency: frequency ?? occurrenceCount,
         occurrenceCount,
         paperCount,
@@ -99,8 +104,12 @@ export default function TopicStudyNotesScreen() {
     topic,
     analysisId,
     subject,
+    subjectId,
     unit,
     moduleName,
+    moduleId,
+    moduleNumber,
+    topicId,
     frequency,
     occurrenceCount,
     paperCount,
@@ -122,7 +131,12 @@ export default function TopicStudyNotesScreen() {
         topic,
         analysisId,
         subject,
+        subjectId,
         unit: unit || moduleName,
+        moduleId,
+        moduleName,
+        moduleNumber,
+        topicId,
         frequency: frequency ?? occurrenceCount,
         occurrenceCount,
         paperCount,
@@ -212,6 +226,24 @@ export default function TopicStudyNotesScreen() {
         </Text>
         <AppButton
           label="Retry with Gemini"
+          onPress={handleRegenerate}
+          loading={isGenerating}
+          style={styles.retryBtn}
+        />
+      </View>
+    );
+  }
+
+  if (!hasNotes) {
+    return (
+      <View style={styles.centered}>
+        <Ionicons name="document-text-outline" size={48} color={colors.primary} />
+        <Text style={styles.errorTitle}>No notes generated yet.</Text>
+        <Text style={styles.errorText}>
+          Generate notes for this topic using your uploaded syllabus and PYQs.
+        </Text>
+        <AppButton
+          label="Generate Notes"
           onPress={handleRegenerate}
           loading={isGenerating}
           style={styles.retryBtn}

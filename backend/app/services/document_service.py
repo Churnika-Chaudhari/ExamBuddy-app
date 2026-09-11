@@ -113,6 +113,8 @@ class DocumentService:
 
         if self.subject_service and resolved_subject and category == "pyq":
             await self.subject_service.on_pyq_uploaded(user_id, resolved_subject)
+        if self.subject_service and resolved_subject and category == "syllabus":
+            await self.subject_service.on_material_uploaded(user_id, resolved_subject)
 
         return map_document_response(document)
 
@@ -207,6 +209,17 @@ class DocumentService:
                         document_id,
                         subject_names[0],
                     )
+                if self.subject_service:
+                    names_to_register = list(subject_names)
+                    if subject:
+                        names_to_register.append(subject)
+                    seen: set[str] = set()
+                    for name in names_to_register:
+                        key = normalize_subject_name(name)
+                        if not key or key.lower() in seen:
+                            continue
+                        seen.add(key.lower())
+                        await self.subject_service.on_material_uploaded(user_id, key)
             elif category == "pyq" and not (subject or "").strip():
                 # Infer subject from filename / paper header so quiz list can show it.
                 inferred = resolve_document_subject(

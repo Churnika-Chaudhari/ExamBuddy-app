@@ -1,28 +1,21 @@
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, spacing, typography } from '@/core/theme';
-import { moderateScale } from '@/core/theme/responsive';
-import { documentsApi, notesApi, subjectsApi } from '@/data/api/endpoints';
-import type { Document, GeneratedTopicNote, Note, QuizSubject } from '@/domain/types';
+import { colors, radius, spacing, typography } from '@/core/theme';
+import { documentsApi, subjectsApi } from '@/data/api/endpoints';
+import type { Document, QuizSubject } from '@/domain/types';
 import type { RootStackParamList } from '@/navigation/types';
+import AppButton from '@/presentation/components/AppButton';
 import AppCard from '@/presentation/components/AppCard';
 import EmptyState from '@/presentation/components/EmptyState';
-import NoteTypeBadge from '@/presentation/components/NoteTypeBadge';
 import ScreenWrapper, { TAB_SCREEN_EDGES } from '@/presentation/components/ScreenWrapper';
-import TopicTags from '@/presentation/components/TopicTags';
-import { useNotesStore } from '@/store/notesStore';
-import { canOpenDocument } from '@/utils/openDocument';
+import { canOpenDocument, openDocumentPdf } from '@/utils/openDocument';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-
-type NotesListItem =
-  | { kind: 'batch'; note: Note }
-  | { kind: 'topic'; note: GeneratedTopicNote };
 
 function formatDate(value?: string): string {
   if (!value) return '';
@@ -33,47 +26,32 @@ function formatDate(value?: string): string {
 
 export default function NotesScreen() {
   const navigation = useNavigation<Nav>();
-  const { notes, isLoading, fetchNotes, clearNotes } = useNotesStore();
-  const [generatedNotes, setGeneratedNotes] = useState<GeneratedTopicNote[]>([]);
-  const [uploadedNotes, setUploadedNotes] = useState<Document[]>([]);
   const [subjects, setSubjects] = useState<QuizSubject[]>([]);
+  const [uploadedNotes, setUploadedNotes] = useState<Document[]>([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [clearing, setClearing] = useState(false);
 
   const loadAll = useCallback(async () => {
-    setRefreshing(true);
-    await fetchNotes();
     try {
-      const { data } = await notesApi.listGenerated(1);
-      setGeneratedNotes(data.data);
-    } catch {
-      setGeneratedNotes([]);
-    }
-    try {
-      const { data } = await documentsApi.list({ category: 'notes' });
-      setUploadedNotes(data.data);
-    } catch {
-      setUploadedNotes([]);
-    }
-    try {
-      const { data } = await subjectsApi.list();
-      setSubjects(data.data);
+      const [{ data: subjectRes }, notesRes] = await Promise.all([
+        subjectsApi.list(),
+        documentsApi.list({ category: 'notes' }).catch(() => null),
+      ]);
+      setSubjects(subjectRes.data || []);
+      setUploadedNotes(notesRes?.data.data || []);
     } catch {
       setSubjects([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-    setRefreshing(false);
-  }, [fetchNotes]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
       loadAll();
     }, [loadAll])
   );
-
-  const listData: NotesListItem[] = [
-    ...generatedNotes.map((note) => ({ kind: 'topic' as const, note })),
-    ...notes.map((note) => ({ kind: 'batch' as const, note })),
-  ];
 
   const openUploadedNote = (doc: Document) => {
     if (canOpenDocument(doc)) {
@@ -87,192 +65,7 @@ export default function NotesScreen() {
     void openDocumentPdf(doc);
   };
 
-  const confirmClearAll = () => {
-    if (!listData.length || clearing) return;
-    Alert.alert(
-      'Clear all generated notes?',
-      'This permanently deletes AI-generated topic and batch notes. Uploaded PDF notes are not removed.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear All',
-          style: 'destructive',
-          onPress: async () => {
-            setClearing(true);
-            try {
-              await clearNotes();
-              setGeneratedNotes([]);
-            } catch {
-              Alert.alert('Could not clear notes', 'Please try again.');
-            } finally {
-              setClearing(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const renderItem = ({ item }: { item: NotesListItem }) => {
-    if (item.kind === 'topic') {
-      const note = item.note;
-      return (
-        <AppCard
-          style={styles.noteCard}
-          onPress={() =>
-            navigation.navigate('TopicStudyNotes', {
-              topic: note.topic,
-              analysisId: note.analysis_id ?? undefined,
-              subject: note.subject ?? undefined,
-              unit: note.unit ?? undefined,
-              frequency: note.frequency ?? undefined,
-            })
-          }
-        >
-          <View style={styles.noteHeader}>
-            <View style={styles.noteIcon}>
-              <Ionicons name="sparkles" size={20} color={colors.primary} />
-            </View>
-            <View style={styles.noteMeta}>
-              <Text style={styles.noteTitle} numberOfLines={2}>
-                {note.topic}
-              </Text>
-              <Text style={styles.topicBadge}>AI Generated</Text>
-            </View>
-            {note.is_saved ? (
-              <Ionicons name="heart" size={18} color={colors.error} style={styles.favoriteIcon} />
-            ) : null}
-          </View>
-          <Text style={styles.noteSummary} numberOfLines={3}>
-            {note.summary || note.notes}
-          </Text>
-        </AppCard>
-      );
-    }
-
-    const note = item.note;
-    return (
-      <AppCard
-        style={styles.noteCard}
-        onPress={() => navigation.navigate('NoteDetail', { noteId: note.id })}
-      >
-        <View style={styles.noteHeader}>
-          <View style={styles.noteIcon}>
-            <Ionicons name="document-text-outline" size={20} color={colors.primary} />
-          </View>
-          <View style={styles.noteMeta}>
-            <Text style={styles.noteTitle} numberOfLines={2}>
-              {note.title}
-            </Text>
-            <NoteTypeBadge type={note.type} />
-          </View>
-          {note.is_favorite ? (
-            <Ionicons name="heart" size={18} color={colors.error} style={styles.favoriteIcon} />
-          ) : null}
-        </View>
-        <Text style={styles.noteSummary} numberOfLines={3}>
-          {note.summary || note.content}
-        </Text>
-        <TopicTags topics={note.topics ?? []} maxVisible={4} />
-      </AppCard>
-    );
-  };
-
-  const renderUploadedNotesSection = () => {
-    if (!uploadedNotes.length) return null;
-    return (
-      <View style={styles.uploadedSection}>
-        <Text style={styles.sectionTitle}>Uploaded Notes</Text>
-        <Text style={styles.sectionHint}>Your PDF notes — tap to open and read</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.uploadedRow}
-        >
-          {uploadedNotes.map((doc) => (
-            <Pressable key={doc.id} onPress={() => openUploadedNote(doc)}>
-              <AppCard style={styles.uploadedCard}>
-                <View style={styles.uploadedIcon}>
-                  <Ionicons name="document-text" size={20} color={colors.primary} />
-                </View>
-                <Text style={styles.uploadedTitle} numberOfLines={2}>
-                  {doc.title}
-                </Text>
-                {doc.subject ? (
-                  <Text style={styles.uploadedSubject} numberOfLines={1}>
-                    {doc.subject}
-                  </Text>
-                ) : null}
-                <Text style={styles.uploadedMeta}>
-                  {doc.page_count ? `${doc.page_count} pg · ` : ''}
-                  {formatDate(doc.created_at)}
-                </Text>
-                {canOpenDocument(doc) ? (
-                  <Text style={styles.uploadedTap}>Tap to open</Text>
-                ) : null}
-              </AppCard>
-            </Pressable>
-          ))}
-        </ScrollView>
-      </View>
-    );
-  };
-
-  const renderSubjectsHeader = () => {
-    return (
-      <View style={styles.subjectsSection}>
-        {renderUploadedNotesSection()}
-        {subjects.length > 0 ? (
-          <>
-            <Text style={styles.sectionTitle}>Study by Subject</Text>
-            <Text style={styles.sectionHint}>
-              AI tutor notes built from your uploaded PYQs and notes for each subject
-            </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.subjectsRow}
-            >
-              {subjects.map((subject) => (
-                <Pressable
-                  key={subject.id}
-                  onPress={() =>
-                    navigation.navigate('SubjectNotes', {
-                      subjectId: subject.id,
-                      subjectName: subject.name,
-                    })
-                  }
-                >
-                  <AppCard style={styles.subjectCard}>
-                    <View style={styles.subjectIcon}>
-                      <Ionicons name="library" size={18} color={colors.primary} />
-                    </View>
-                    <Text style={styles.subjectName} numberOfLines={2}>
-                      {subject.name}
-                    </Text>
-                    <Text style={styles.subjectMeta}>
-                      {subject.topic_count} topic{subject.topic_count === 1 ? '' : 's'} ·{' '}
-                      {subject.pyq_count} paper{subject.pyq_count === 1 ? '' : 's'}
-                    </Text>
-                  </AppCard>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </>
-        ) : null}
-        {listData.length > 0 ? (
-          <Text style={styles.sectionTitle}>Generated Notes</Text>
-        ) : null}
-        {listData.length > 0 ? (
-          <Text style={styles.sectionHint}>AI tutor notes with detailed topic explanations</Text>
-        ) : null}
-      </View>
-    );
-  };
-
-  const hasAnyContent = listData.length > 0 || uploadedNotes.length > 0 || subjects.length > 0;
-
-  if (isLoading && !hasAnyContent && !refreshing) {
+  if (loading && !refreshing) {
     return (
       <ScreenWrapper scrollable={false} padded={false} edges={TAB_SCREEN_EDGES}>
         <View style={styles.centered}>
@@ -283,87 +76,101 @@ export default function NotesScreen() {
   }
 
   return (
-    <ScreenWrapper scrollable={false} padded={false} edges={TAB_SCREEN_EDGES}>
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={styles.title}>My Notes</Text>
-            <Text style={styles.subtitle}>Uploaded PDFs and AI-generated tutor notes</Text>
-          </View>
-          {listData.length > 0 ? (
-            <Pressable
-              onPress={confirmClearAll}
-              hitSlop={8}
-              disabled={clearing}
-              style={[styles.clearAllBtn, clearing && styles.clearAllBtnDisabled]}
-            >
-              <Ionicons name="trash-outline" size={14} color={colors.error} />
-              <Text style={styles.clearAllText}>{clearing ? 'Clearing…' : 'Clear All'}</Text>
-            </Pressable>
-          ) : null}
-        </View>
-
-        <FlatList
-          data={listData}
-          keyExtractor={(item) =>
-            item.kind === 'topic' ? `topic-${item.note.id}` : `batch-${item.note.id}`
-          }
-          renderItem={renderItem}
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-          onRefresh={loadAll}
-          refreshing={refreshing}
-          ListHeaderComponent={renderSubjectsHeader}
-          ListEmptyComponent={
-            !hasAnyContent ? (
-              <EmptyState
-                icon="book-outline"
-                title="No notes yet"
-                subtitle="Upload notes PDFs or pick a subject to generate detailed AI tutor notes"
-              />
-            ) : null
-          }
-        />
+    <ScreenWrapper
+      edges={TAB_SCREEN_EDGES}
+      refreshing={refreshing}
+      onRefresh={() => {
+        setRefreshing(true);
+        loadAll();
+      }}
+    >
+      <View style={styles.header}>
+        <Text style={styles.title}>Notes Generation</Text>
+        <Text style={styles.subtitle}>Select Subject</Text>
       </View>
+
+      {subjects.length === 0 ? (
+        <EmptyState
+          icon="library-outline"
+          title="No subjects available yet"
+          subtitle="Upload a syllabus or analyze a PYQ to get started."
+        />
+      ) : (
+        subjects.map((subject) => {
+          const papers = subject.analyzed_paper_count || subject.pyq_count || 0;
+          return (
+            <AppCard key={subject.id} style={styles.subjectCard}>
+              <View style={styles.subjectHeader}>
+                <View style={styles.subjectIcon}>
+                  <Ionicons name="library" size={20} color={colors.primary} />
+                </View>
+                <View style={styles.subjectMeta}>
+                  <Text style={styles.subjectName}>{subject.name}</Text>
+                  <Text style={styles.subjectStat}>PYQs Analyzed: {papers}</Text>
+                  <Text style={styles.subjectStat}>Topics Found: {subject.topic_count}</Text>
+                </View>
+              </View>
+              <AppButton
+                label="View Notes"
+                onPress={() =>
+                  navigation.navigate('SubjectNotes', {
+                    subjectId: subject.id,
+                    subjectName: subject.name,
+                  })
+                }
+                icon="document-text-outline"
+                style={styles.viewBtn}
+              />
+            </AppCard>
+          );
+        })
+      )}
+
+      {uploadedNotes.length > 0 ? (
+        <View style={styles.uploadedSection}>
+          <Text style={styles.sectionTitle}>Uploaded PDF Notes</Text>
+          <Text style={styles.sectionHint}>Your own notes — tap to open and read</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.uploadedRow}
+          >
+            {uploadedNotes.map((doc) => (
+              <Pressable key={doc.id} onPress={() => openUploadedNote(doc)}>
+                <AppCard style={styles.uploadedCard}>
+                  <View style={styles.uploadedIcon}>
+                    <Ionicons name="document-text" size={20} color={colors.primary} />
+                  </View>
+                  <Text style={styles.uploadedTitle} numberOfLines={2}>
+                    {doc.title}
+                  </Text>
+                  {doc.subject ? (
+                    <Text style={styles.uploadedSubject} numberOfLines={1}>
+                      {doc.subject}
+                    </Text>
+                  ) : null}
+                  <Text style={styles.uploadedMeta}>
+                    {doc.page_count ? `${doc.page_count} pg · ` : ''}
+                    {formatDate(doc.created_at)}
+                  </Text>
+                </AppCard>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
     </ScreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
   centered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   header: {
-    padding: spacing.md,
-    paddingBottom: spacing.sm,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-  },
-  headerText: {
-    flex: 1,
-    minWidth: 0,
-    paddingRight: spacing.sm,
-  },
-  clearAllBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: spacing.xs,
-    marginTop: 4,
-  },
-  clearAllBtnDisabled: {
-    opacity: 0.5,
-  },
-  clearAllText: {
-    ...typography.caption,
-    color: colors.error,
-    fontWeight: '600',
+    marginBottom: spacing.md,
   },
   title: {
     ...typography.h2,
@@ -374,59 +181,44 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 4,
   },
-  list: {
-    padding: spacing.md,
-    paddingTop: 0,
-    flexGrow: 1,
-    paddingBottom: spacing.lg,
-  },
-  noteCard: {
+  subjectCard: {
     padding: spacing.md,
     marginBottom: spacing.sm,
-    overflow: 'visible',
   },
-  noteHeader: {
+  subjectHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    gap: spacing.sm,
     marginBottom: spacing.sm,
   },
-  noteIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+  subjectIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
     backgroundColor: colors.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: spacing.sm,
-    flexShrink: 0,
   },
-  noteMeta: {
+  subjectMeta: {
     flex: 1,
     minWidth: 0,
-    paddingRight: spacing.xs,
   },
-  noteTitle: {
-    ...typography.label,
+  subjectName: {
+    ...typography.h3,
     color: colors.text,
+    marginBottom: 4,
   },
-  topicBadge: {
+  subjectStat: {
     ...typography.caption,
-    color: colors.primary,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  favoriteIcon: {
-    marginTop: 2,
-    flexShrink: 0,
-  },
-  noteSummary: {
-    ...typography.bodySmall,
     color: colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: spacing.sm,
+    marginTop: 1,
+  },
+  viewBtn: {
+    marginTop: spacing.xs,
   },
   uploadedSection: {
-    marginBottom: spacing.md,
+    marginTop: spacing.md,
+    marginBottom: spacing.lg,
   },
   sectionTitle: {
     ...typography.label,
@@ -444,8 +236,8 @@ const styles = StyleSheet.create({
     paddingRight: spacing.md,
   },
   uploadedCard: {
-    width: moderateScale(160),
-    minHeight: moderateScale(130),
+    width: 160,
+    minHeight: 120,
     padding: spacing.md,
   },
   uploadedIcon: {
@@ -467,42 +259,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   uploadedMeta: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-  uploadedTap: {
-    ...typography.caption,
-    color: colors.primary,
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  subjectsSection: {
-    marginBottom: spacing.sm,
-  },
-  subjectsRow: {
-    gap: spacing.sm,
-    paddingRight: spacing.md,
-  },
-  subjectCard: {
-    width: moderateScale(148),
-    minHeight: moderateScale(120),
-    padding: spacing.md,
-  },
-  subjectIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 9,
-    backgroundColor: colors.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  subjectName: {
-    ...typography.label,
-    color: colors.text,
-  },
-  subjectMeta: {
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: 4,

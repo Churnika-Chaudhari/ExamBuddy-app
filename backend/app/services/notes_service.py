@@ -3,6 +3,8 @@ from typing import Any
 
 import logging
 
+from bson import ObjectId
+
 from app.core.exceptions import NotFoundError, ValidationAppError
 from app.models.enums import NoteSourceType, NoteType
 from app.repositories.analysis_repository import AnalysisRepository
@@ -70,7 +72,12 @@ class NotesService:
         *,
         analysis_id: str | None = None,
         subject: str | None = None,
+        subject_id: str | None = None,
         unit: str | None = None,
+        module_id: str | None = None,
+        module_name: str | None = None,
+        module_number: int | None = None,
+        topic_id: str | None = None,
         frequency: int | None = None,
         occurrence_count: int | None = None,
         paper_count: int | None = None,
@@ -90,9 +97,13 @@ class NotesService:
             if not analysis_doc:
                 raise NotFoundError("Analysis not found")
 
+        from app.utils.subject_detector import normalize_subject_name
+
+        subject_name = normalize_subject_name(subject or (analysis_doc.get("subject") if analysis_doc else "") or "") or None
+
         if not regenerate:
             cached = await self.generated_notes_repo.find_cached(
-                user_id, topic_key, analysis_id=analysis_id
+                user_id, topic_key, analysis_id=analysis_id, subject=subject_name
             )
             if cached and cached.get("notes"):
                 cached_version = (cached.get("ai_metadata") or {}).get("prompt_version")
@@ -101,7 +112,7 @@ class NotesService:
                     return map_generated_note(cached, cached=True)
 
         existing = await self.generated_notes_repo.find_cached(
-            user_id, topic_key, analysis_id=analysis_id
+            user_id, topic_key, analysis_id=analysis_id, subject=subject_name
         )
         preserve_saved = bool(existing and existing.get("is_saved"))
 
@@ -155,8 +166,17 @@ class NotesService:
                 "topic_key": topic_key,
                 "notes": notes_text,
                 "summary": result.get("summary"),
-                "subject": subject,
-                "unit": unit,
+                "subject": subject_name or subject,
+                "subject_id": (
+                    self.generated_notes_repo.to_object_id(subject_id)
+                    if subject_id and ObjectId.is_valid(subject_id)
+                    else None
+                ),
+                "unit": unit or module_name,
+                "module_id": module_id,
+                "module_name": module_name or unit,
+                "module_number": module_number,
+                "topic_id": topic_id,
                 "frequency": frequency,
                 "analysis_id": (
                     self.generated_notes_repo.to_object_id(analysis_id)
@@ -176,6 +196,7 @@ class NotesService:
             topic_key,
             upsert_payload,
             analysis_id=analysis_id,
+            subject=subject_name or subject,
         )
 
         logger.info("Saved generated notes id=%s topic=%s", note_doc.get("_id"), topic)
@@ -312,10 +333,14 @@ class NotesService:
         topic: str,
         *,
         analysis_id: str | None = None,
+        subject: str | None = None,
     ) -> dict[str, Any]:
+        from app.utils.subject_detector import normalize_subject_name
+
         topic_key = normalize_topic_key(topic)
+        subject_name = normalize_subject_name(subject or "") or None
         cached = await self.generated_notes_repo.find_cached(
-            user_id, topic_key, analysis_id=analysis_id
+            user_id, topic_key, analysis_id=analysis_id, subject=subject_name
         )
         return {
             "topic": topic,
@@ -330,21 +355,33 @@ class NotesService:
         page: int = 1,
         limit: int = 20,
         analysis_id: str | None = None,
+        subject: str | None = None,
+        module_ids: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
+        from app.utils.module_filter import parse_module_ids
+        from app.utils.subject_detector import normalize_subject_name
+
         skip = (page - 1) * limit
+        subject_name = normalize_subject_name(subject or "") or None
+        modules = parse_module_ids(module_ids) or None
         notes = await self.generated_notes_repo.list_by_user(
-            user_id, skip=skip, limit=limit, analysis_id=analysis_id
+            user_id,
+            skip=skip,
+            limit=limit,
+            analysis_id=analysis_id,
+            subject=subject_name,
+            module_ids=modules,
         )
-        total = await self.generated_notes_repo.count(
-            {
-                "user_id": self.generated_notes_repo.to_object_id(user_id),
-                **(
-                    {"analysis_id": self.generated_notes_repo.to_object_id(analysis_id)}
-                    if analysis_id
-                    else {}
-                ),
-            }
-        )
+        query: dict[str, Any] = {
+            "user_id": self.generated_notes_repo.to_object_id(user_id),
+        }
+        if analysis_id:
+            query["analysis_id"] = self.generated_notes_repo.to_object_id(analysis_id)
+        if subject_name:
+            query["subject"] = subject_name
+        if modules:
+            query["module_id"] = {"$in": modules}
+        total = await self.generated_notes_repo.count(query)
         return [map_generated_note(n, cached=True) for n in notes], total
 
     async def get_generated_note(self, note_id: str, user_id: str) -> dict[str, Any]:
@@ -381,6 +418,22 @@ class NotesService:
     ) -> list[str]:
         return await self.generated_notes_repo.list_topic_keys_for_analysis(
             user_id, analysis_id
+        )
+
+    async def list_cached_topics_for_subject(
+        self,
+        user_id: str,
+        subject: str,
+        module_ids: list[str] | None = None,
+    ) -> list[str]:
+        from app.utils.module_filter import parse_module_ids
+        from app.utils.subject_detector import normalize_subject_name
+
+        subject_name = normalize_subject_name(subject or "")
+        if not subject_name:
+            return []
+        return await self.generated_notes_repo.list_topic_keys_for_subject(
+            user_id, subject_name, module_ids=parse_module_ids(module_ids) or None
         )
 
     async def generate_notes(

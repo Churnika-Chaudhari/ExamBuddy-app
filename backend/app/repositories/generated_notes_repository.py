@@ -27,6 +27,7 @@ class GeneratedNotesRepository(BaseRepository):
         topic_key: str,
         *,
         analysis_id: str | None = None,
+        subject: str | None = None,
     ) -> dict[str, Any] | None:
         query: dict[str, Any] = {
             "user_id": self.to_object_id(user_id),
@@ -36,7 +37,22 @@ class GeneratedNotesRepository(BaseRepository):
             query["analysis_id"] = self.to_object_id(analysis_id)
         else:
             query["analysis_id"] = None
-        return await self.collection.find_one(query)
+        if subject:
+            query["subject"] = subject
+        found = await self.collection.find_one(query)
+        if found or not subject:
+            return found
+        # Older notes were keyed without subject. Never reuse another subject's note.
+        fallback = {k: v for k, v in query.items() if k != "subject"}
+        old = await self.collection.find_one(fallback)
+        if not old:
+            return None
+        existing = (old.get("subject") or "").strip()
+        if not existing:
+            return old
+        if existing.lower() == subject.lower():
+            return old
+        return None
 
     async def upsert(
         self,
@@ -45,6 +61,7 @@ class GeneratedNotesRepository(BaseRepository):
         data: dict[str, Any],
         *,
         analysis_id: str | None = None,
+        subject: str | None = None,
     ) -> dict[str, Any]:
         """
         Upsert generated note.
@@ -61,6 +78,9 @@ class GeneratedNotesRepository(BaseRepository):
             query["analysis_id"] = self.to_object_id(analysis_id)
         else:
             query["analysis_id"] = None
+        subject_name = subject or data.get("subject")
+        if subject_name:
+            query["subject"] = subject_name
 
         now = datetime.now(UTC)
 
@@ -98,10 +118,16 @@ class GeneratedNotesRepository(BaseRepository):
         skip: int = 0,
         limit: int = 50,
         analysis_id: str | None = None,
+        subject: str | None = None,
+        module_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         query: dict[str, Any] = {"user_id": self.to_object_id(user_id)}
         if analysis_id:
             query["analysis_id"] = self.to_object_id(analysis_id)
+        if subject:
+            query["subject"] = subject
+        if module_ids:
+            query["module_id"] = {"$in": module_ids}
         return await self.find_many(
             query, skip=skip, limit=limit, sort=[("updated_at", -1)]
         )
@@ -135,3 +161,22 @@ class GeneratedNotesRepository(BaseRepository):
         )
         docs = await cursor.to_list(length=200)
         return [d["topic_key"] for d in docs if d.get("topic_key")]
+
+    async def list_topic_keys_for_subject(
+        self, user_id: str, subject: str, module_ids: list[str] | None = None
+    ) -> list[str]:
+        query: dict[str, Any] = {
+            "user_id": self.to_object_id(user_id),
+            "subject": subject,
+        }
+        if module_ids:
+            query["module_id"] = {"$in": module_ids}
+        cursor = self.collection.find(query, {"topic_key": 1, "topic": 1, "topic_id": 1})
+        docs = await cursor.to_list(length=500)
+        keys: list[str] = []
+        for doc in docs:
+            if doc.get("topic_key"):
+                keys.append(doc["topic_key"])
+            if doc.get("topic"):
+                keys.append(normalize_topic_key(str(doc["topic"])))
+        return list(dict.fromkeys(keys))

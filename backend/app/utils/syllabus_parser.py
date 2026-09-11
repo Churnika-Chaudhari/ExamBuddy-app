@@ -421,6 +421,7 @@ def collect_syllabus_catalog(
     subjects: list[dict[str, Any]] = []
     seen_topics: set[str] = set()
     seen_subjects: set[str] = set()
+    pref = normalize_subject_name(preferred_subject or "").lower()
 
     for doc in syllabus_docs:
         structure = doc.get("syllabus_structure") or {}
@@ -431,12 +432,17 @@ def collect_syllabus_catalog(
             )
         for subject in structure.get("subjects") or []:
             name = normalize_subject_name(subject.get("name") or "")
+            if pref and name.lower() != pref:
+                continue
             if name and name.lower() not in seen_subjects:
                 seen_subjects.add(name.lower())
                 subjects.append(subject)
         for row in structure.get("catalog") or []:
             topic = str(row.get("topic") or "").strip()
             if not topic:
+                continue
+            row_subject = normalize_subject_name(str(row.get("subject") or ""))
+            if pref and row_subject and row_subject.lower() != pref:
                 continue
             key = f"{row.get('subject','')}|{topic}".lower()
             if key in seen_topics:

@@ -174,12 +174,15 @@ export default function ModuleTopicsScreen() {
     navigation.navigate('TopicStudyNotes', {
       topic: topicLabel(t),
       subject: overview.subject || subjectName,
+      subjectId,
       analysisId: t.analysis_ids?.[0] || analysisIds?.[0] || overview.analysis_ids[0],
       unit: t.unit || current?.display_name || moduleName,
+      moduleId: t.module_id || current?.module_id,
       moduleName: current?.display_name || moduleName,
       moduleNumber: current?.module_number ?? moduleNumber,
+      topicId: t.topic_id || undefined,
       frequency: occ || undefined,
-      occurrenceCount: occ || undefined,
+      occurrenceCount: occ,
       paperCount: paperCountOf(t) || undefined,
       totalMarks: t.total_marks ?? undefined,
       priority: topicPriority(t),
@@ -304,9 +307,31 @@ export default function ModuleTopicsScreen() {
                   })
                 )}
                 {otherTopics.length > 0 ? (
-                  <Text style={styles.otherHint}>
-                    {otherTopics.length} syllabus topic{otherTopics.length === 1 ? '' : 's'} not asked in PYQs
-                  </Text>
+                  <>
+                    <Text style={styles.otherHint}>
+                      {otherTopics.length} syllabus topic{otherTopics.length === 1 ? '' : 's'} not asked in PYQs
+                    </Text>
+                    {otherTopics.map((t, idx) => (
+                      <Pressable
+                        key={`${mod.module_id}-syl-${topicLabel(t)}-${idx}`}
+                        onPress={() => openTopic(t, mod)}
+                      >
+                        <AppCard style={styles.topicCard}>
+                          <View style={styles.topicRow}>
+                            <View style={styles.topicMeta}>
+                              <Text style={styles.topicName} numberOfLines={2}>
+                                {topicLabel(t)}
+                              </Text>
+                              <Text style={styles.topicFreq}>
+                                PYQ Occurrence: 0 · Available from Syllabus
+                              </Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                          </View>
+                        </AppCard>
+                      </Pressable>
+                    ))}
+                  </>
                 ) : null}
               </View>
             );

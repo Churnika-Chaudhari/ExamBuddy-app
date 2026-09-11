@@ -64,7 +64,12 @@ async def generate_topic_notes(
         payload.topic,
         analysis_id=payload.analysis_id,
         subject=payload.subject,
+        subject_id=payload.subject_id,
         unit=payload.unit,
+        module_id=payload.module_id,
+        module_name=payload.module_name,
+        module_number=payload.module_number,
+        topic_id=payload.topic_id,
         frequency=payload.frequency,
         occurrence_count=payload.occurrence_count,
         paper_count=payload.paper_count,
@@ -91,7 +96,12 @@ async def regenerate_topic_notes(
         payload.topic,
         analysis_id=payload.analysis_id,
         subject=payload.subject,
+        subject_id=payload.subject_id,
         unit=payload.unit,
+        module_id=payload.module_id,
+        module_name=payload.module_name,
+        module_number=payload.module_number,
+        topic_id=payload.topic_id,
         frequency=payload.frequency,
         occurrence_count=payload.occurrence_count,
         paper_count=payload.paper_count,
@@ -139,11 +149,27 @@ async def topic_notes_status(
     current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     notes_service: Annotated[NotesService, Depends(get_notes_service)],
     analysis_id: str | None = None,
+    subject: str | None = None,
 ):
     data = await notes_service.get_topic_cache_status(
-        str(current_user["_id"]), topic, analysis_id=analysis_id
+        str(current_user["_id"]), topic, analysis_id=analysis_id, subject=subject
     )
     return success_response(data)
+
+
+@router.get("/topic/cached-keys", summary="List cached topic keys for a subject")
+async def list_cached_topic_keys(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    notes_service: Annotated[NotesService, Depends(get_notes_service)],
+    subject: Annotated[str, Query(min_length=1)],
+    module_ids: Annotated[str | None, Query(description="Comma-separated module IDs")] = None,
+):
+    keys = await notes_service.list_cached_topics_for_subject(
+        str(current_user["_id"]),
+        subject,
+        module_ids=module_ids,
+    )
+    return success_response({"subject": subject, "topic_keys": keys})
 
 
 @router.get("/generated", summary="List per-topic generated study notes")
@@ -152,12 +178,16 @@ async def list_generated_notes(
     notes_service: Annotated[NotesService, Depends(get_notes_service)],
     pagination: Annotated[PaginationParams, Depends()],
     analysis_id: str | None = None,
+    subject: str | None = None,
+    module_ids: Annotated[str | None, Query(description="Comma-separated module IDs")] = None,
 ):
     notes, total = await notes_service.list_generated_notes(
         str(current_user["_id"]),
         page=pagination.page,
         limit=pagination.limit,
         analysis_id=analysis_id,
+        subject=subject,
+        module_ids=module_ids,
     )
     return paginated_response(notes, pagination.page, pagination.limit, total)
 

@@ -148,7 +148,12 @@ export const notesApi = {
     topic: string;
     analysis_id?: string;
     subject?: string;
+    subject_id?: string;
     unit?: string;
+    module_id?: string;
+    module_name?: string;
+    module_number?: number | null;
+    topic_id?: string;
     frequency?: number;
     occurrence_count?: number;
     paper_count?: number;
@@ -161,7 +166,12 @@ export const notesApi = {
     topic: string;
     analysis_id?: string;
     subject?: string;
+    subject_id?: string;
     unit?: string;
+    module_id?: string;
+    module_name?: string;
+    module_number?: number | null;
+    topic_id?: string;
     frequency?: number;
     occurrence_count?: number;
     paper_count?: number;
@@ -169,15 +179,24 @@ export const notesApi = {
     priority?: string;
   }) => apiClient.post<ApiResponse<GeneratedTopicNote>>('/notes/topic/regenerate', payload),
 
-  topicStatus: (topic: string, analysisId?: string) =>
+  topicStatus: (topic: string, analysisId?: string, subject?: string) =>
     apiClient.get<ApiResponse<{ topic: string; has_notes: boolean; note_id?: string }>>(
       '/notes/topic/status',
-      { params: { topic, analysis_id: analysisId } }
+      { params: { topic, analysis_id: analysisId, subject } }
     ),
 
-  listGenerated: (page = 1, analysisId?: string) =>
+  listGenerated: (
+    page = 1,
+    analysisId?: string,
+    options?: { subject?: string; moduleIds?: string[] }
+  ) =>
     apiClient.get<PaginatedApiResponse<GeneratedTopicNote>>('/notes/generated', {
-      params: { page, analysis_id: analysisId },
+      params: {
+        page,
+        analysis_id: analysisId,
+        subject: options?.subject,
+        module_ids: options?.moduleIds?.length ? options.moduleIds.join(',') : undefined,
+      },
     }),
 
   getGenerated: (id: string) =>
@@ -199,6 +218,21 @@ export const notesApi = {
       { params: { page: 1, limit: 100, analysis_id: analysisId } }
     );
     return data.data.map((n) => n.topic.toLowerCase().trim());
+  },
+
+  listCachedTopicKeysForSubject: async (
+    subject: string,
+    moduleIds?: string[]
+  ): Promise<string[]> => {
+    const { data } = await apiClient.get<
+      ApiResponse<{ subject: string; topic_keys: string[] }>
+    >('/notes/topic/cached-keys', {
+      params: {
+        subject,
+        module_ids: moduleIds?.length ? moduleIds.join(',') : undefined,
+      },
+    });
+    return data.data.topic_keys || [];
   },
 
   simplify: (payload: { document_id?: string; text?: string; title?: string }) =>
