@@ -4,29 +4,18 @@ import { colors } from '@/core/theme';
 import AuthNavigator from '@/navigation/AuthNavigator';
 import MainTabNavigator from '@/navigation/MainTabNavigator';
 import type { RootStackParamList } from '@/navigation/types';
-import AnalysisResultScreen from '@/presentation/screens/AnalysisResultScreen';
-import NoteDetailScreen from '@/presentation/screens/NoteDetailScreen';
-import QuizPlayScreen from '@/presentation/screens/QuizPlayScreen';
-import QuizResultScreen from '@/presentation/screens/QuizResultScreen';
-import QuizSubjectSelectScreen from '@/presentation/screens/QuizSubjectSelectScreen';
-import QuizConfigScreen from '@/presentation/screens/QuizConfigScreen';
-import QuizHistoryScreen from '@/presentation/screens/QuizHistoryScreen';
-import QuizAnalysisScreen from '@/presentation/screens/QuizAnalysisScreen';
-import QuizAttemptReviewScreen from '@/presentation/screens/QuizAttemptReviewScreen';
-import SplashScreen from '@/presentation/screens/SplashScreen';
-import SubjectNotesScreen from '@/presentation/screens/SubjectNotesScreen';
-import ModuleTopicsScreen from '@/presentation/screens/ModuleTopicsScreen';
-import TopicStudyNotesScreen from '@/presentation/screens/TopicStudyNotesScreen';
-import UploadPYQScreen from '@/presentation/screens/UploadPYQScreen';
-import DocumentViewerScreen from '@/presentation/screens/DocumentViewerScreen';
-import UploadedDocumentsScreen from '@/presentation/screens/UploadedDocumentsScreen';
+import { useAuthStore } from '@/store/authStore';
+import { startupMark } from '@/utils/startupPerf';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function RootNavigator() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  startupMark('RootNavigator started');
+
   return (
     <Stack.Navigator
-      initialRouteName="Splash"
+      initialRouteName={isAuthenticated ? 'Main' : 'Auth'}
       screenOptions={{
         headerStyle: { backgroundColor: colors.background },
         headerTintColor: colors.text,
@@ -35,12 +24,16 @@ export default function RootNavigator() {
         contentStyle: { backgroundColor: colors.background },
       }}
     >
-      <Stack.Screen name="Splash" component={SplashScreen} options={{ headerShown: false }} />
+      <Stack.Screen
+        name="Splash"
+        getComponent={() => require('@/presentation/screens/SplashScreen').default}
+        options={{ headerShown: false }}
+      />
       <Stack.Screen name="Auth" component={AuthNavigator} options={{ headerShown: false }} />
       <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />
       <Stack.Screen
         name="UploadPYQ"
-        component={UploadPYQScreen}
+        getComponent={() => require('@/presentation/screens/UploadPYQScreen').default}
         options={({ route }) => ({
           title:
             route.params?.initialCategory === 'syllabus'
@@ -52,72 +45,72 @@ export default function RootNavigator() {
       />
       <Stack.Screen
         name="UploadedDocuments"
-        component={UploadedDocumentsScreen}
+        getComponent={() => require('@/presentation/screens/UploadedDocumentsScreen').default}
         options={{ title: 'Uploaded Documents' }}
       />
       <Stack.Screen
         name="DocumentViewer"
-        component={DocumentViewerScreen}
+        getComponent={() => require('@/presentation/screens/DocumentViewerScreen').default}
         options={({ route }) => ({ title: route.params.title })}
       />
       <Stack.Screen
         name="AnalysisResult"
-        component={AnalysisResultScreen}
+        getComponent={() => require('@/presentation/screens/AnalysisResultScreen').default}
         options={{ title: 'Analysis Result' }}
       />
       <Stack.Screen
         name="SubjectNotes"
-        component={SubjectNotesScreen}
+        getComponent={() => require('@/presentation/screens/SubjectNotesScreen').default}
         options={{ title: 'Subject Notes' }}
       />
       <Stack.Screen
         name="ModuleTopics"
-        component={ModuleTopicsScreen}
+        getComponent={() => require('@/presentation/screens/ModuleTopicsScreen').default}
         options={{ title: 'Module Topics' }}
       />
       <Stack.Screen
         name="TopicStudyNotes"
-        component={TopicStudyNotesScreen}
+        getComponent={() => require('@/presentation/screens/TopicStudyNotesScreen').default}
         options={{ title: 'Study Notes' }}
       />
       <Stack.Screen
         name="NoteDetail"
-        component={NoteDetailScreen}
+        getComponent={() => require('@/presentation/screens/NoteDetailScreen').default}
         options={{ title: 'Note' }}
       />
       <Stack.Screen
         name="QuizPlay"
-        component={QuizPlayScreen}
+        getComponent={() => require('@/presentation/screens/QuizPlayScreen').default}
         options={{ title: 'Take Quiz' }}
       />
       <Stack.Screen
         name="QuizResult"
-        component={QuizResultScreen}
+        getComponent={() => require('@/presentation/screens/QuizResultScreen').default}
         options={{ title: 'Quiz Result', headerLeft: () => null }}
       />
       <Stack.Screen
         name="QuizSubjectSelect"
-        component={QuizSubjectSelectScreen}
+        getComponent={() => require('@/presentation/screens/QuizSubjectSelectScreen').default}
         options={{ title: 'Select Subject' }}
       />
       <Stack.Screen
         name="QuizConfig"
-        component={QuizConfigScreen}
+        getComponent={() => require('@/presentation/screens/QuizConfigScreen').default}
         options={{ title: 'Quiz Settings' }}
       />
       <Stack.Screen
         name="QuizHistory"
-        component={QuizHistoryScreen}
+        getComponent={() => require('@/presentation/screens/QuizHistoryScreen').default}
         options={{ title: 'Quiz History' }}
       />
       <Stack.Screen
         name="QuizAnalysis"
-        component={QuizAnalysisScreen}
+        getComponent={() => require('@/presentation/screens/QuizAnalysisScreen').default}
         options={{ title: 'Quiz Analysis' }}
       />
       <Stack.Screen
         name="QuizAttemptReview"
-        component={QuizAttemptReviewScreen}
+        getComponent={() => require('@/presentation/screens/QuizAttemptReviewScreen').default}
         options={{ title: 'Review Attempt' }}
       />
     </Stack.Navigator>

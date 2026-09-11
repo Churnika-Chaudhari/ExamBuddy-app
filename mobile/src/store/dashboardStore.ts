@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { dashboardApi } from '@/data/api/endpoints';
 import { getErrorMessage } from '@/data/api/client';
 import type { DashboardData } from '@/domain/types';
+import { startupApiMark } from '@/utils/startupPerf';
 
 interface DashboardState {
   data: DashboardData | null;
@@ -20,10 +21,13 @@ export const useDashboardStore = create<DashboardState>((set) => ({
 
   fetchDashboard: async () => {
     set({ isLoading: true, error: null });
+    const started = Date.now();
     try {
       const { data } = await dashboardApi.get();
+      startupApiMark('/dashboard', started);
       set({ data: data.data, isLoading: false });
     } catch (error) {
+      startupApiMark('/dashboard failed', started);
       set({ error: getErrorMessage(error), isLoading: false });
     }
   },

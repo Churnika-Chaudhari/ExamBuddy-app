@@ -37,10 +37,11 @@ export default function LoginScreen() {
   const backendOk = healthStatus === 'connected';
 
   useEffect(() => {
+    if (isChecking) return;
     if (healthStatus === 'checking') {
       runHealthCheck();
     }
-  }, [healthStatus, runHealthCheck]);
+  }, [healthStatus, isChecking, runHealthCheck]);
 
   const handleLogin = async () => {
     clearError();

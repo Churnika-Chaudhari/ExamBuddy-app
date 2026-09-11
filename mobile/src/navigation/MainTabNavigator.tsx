@@ -7,9 +7,6 @@ import { fontScale, moderateScale } from '@/core/theme/responsive';
 import type { MainTabParamList } from '@/navigation/types';
 import AppTabBar from '@/presentation/components/AppTabBar';
 import DashboardScreen from '@/presentation/screens/DashboardScreen';
-import NotesScreen from '@/presentation/screens/NotesScreen';
-import ProfileScreen from '@/presentation/screens/ProfileScreen';
-import QuizScreen from '@/presentation/screens/QuizScreen';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
@@ -73,9 +70,18 @@ export default function MainTabNavigator() {
       }}
     >
       <Tab.Screen name="Dashboard" component={DashboardScreen} />
-      <Tab.Screen name="Notes" component={NotesScreen} />
-      <Tab.Screen name="Quiz" component={QuizScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen
+        name="Notes"
+        getComponent={() => require('@/presentation/screens/NotesScreen').default}
+      />
+      <Tab.Screen
+        name="Quiz"
+        getComponent={() => require('@/presentation/screens/QuizScreen').default}
+      />
+      <Tab.Screen
+        name="Profile"
+        getComponent={() => require('@/presentation/screens/ProfileScreen').default}
+      />
     </Tab.Navigator>
   );
 }
