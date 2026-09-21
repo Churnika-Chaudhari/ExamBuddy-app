@@ -192,7 +192,7 @@ export default function TopicStudyNotesScreen() {
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={colors.primary} />
         <Text style={styles.loadingText}>
-          {isGenerating ? 'Generating AI study notes from your PDFs...' : 'Loading notes...'}
+          {isGenerating ? 'Writing concise study notes for this topic...' : 'Loading notes...'}
         </Text>
       </View>
     );

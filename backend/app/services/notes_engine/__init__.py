@@ -1,28 +1,48 @@
-"""ExamBuddy Notes Engine — sectioned (v30) exam-notes generation pipeline."""
+"""
+ExamBuddy Notes Engine — concise (v40) Stage-3 exam notes.
 
+ONE focused Gemini call per topic produces a 300-600 word, seven-section
+revision note: Definition, Working, Advantages, Disadvantages, Applications,
+Example, Quick Revision. (Replaces the retired v30 "sectioned" engine, which
+built a 2500-5000 word chapter from 11 paced calls.)
+"""
+
+from app.services.notes_engine.markdown_formatter import (
+    normalize_concise_payload,
+    render_concise_markdown,
+)
 from app.services.notes_engine.pipeline import (
-    SectionedNotesPipeline,
-    generate_sectioned_notes_result,
+    ConciseNotesPipeline,
+    generate_concise_notes_result,
 )
 from app.services.notes_engine.schema import (
+    CONCISE_ENGINE_ID,
+    CONCISE_NOTES_RESPONSE_SCHEMA,
+    CONCISE_PROMPT_VERSION,
     PROMPT_VERSION,
+    SECTION_HEADINGS,
     SECTION_ORDER,
-    SECTION_SCHEMAS,
-    SECTION_TITLES,
-    SECTIONED_ENGINE_ID,
-    SECTIONED_PROMPT_VERSION,
 )
-from app.services.notes_engine.validator import NotesSchemaError, NotesValidationError
+from app.services.notes_engine.validator import (
+    NotesSchemaError,
+    NotesValidationError,
+    validate_concise_payload,
+    validate_final_notes,
+)
 
 __all__ = [
-    "SectionedNotesPipeline",
-    "generate_sectioned_notes_result",
+    "ConciseNotesPipeline",
+    "generate_concise_notes_result",
+    "normalize_concise_payload",
+    "render_concise_markdown",
+    "validate_concise_payload",
+    "validate_final_notes",
+    "CONCISE_ENGINE_ID",
+    "CONCISE_NOTES_RESPONSE_SCHEMA",
+    "CONCISE_PROMPT_VERSION",
     "PROMPT_VERSION",
-    "SECTIONED_ENGINE_ID",
-    "SECTIONED_PROMPT_VERSION",
+    "SECTION_HEADINGS",
     "SECTION_ORDER",
-    "SECTION_SCHEMAS",
-    "SECTION_TITLES",
     "NotesSchemaError",
     "NotesValidationError",
 ]

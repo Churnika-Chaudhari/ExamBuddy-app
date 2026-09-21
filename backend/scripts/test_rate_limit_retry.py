@@ -2,18 +2,17 @@
 """
 Smoke tests for free-tier Gemini rate-limit handling — NO live network calls.
 
-Covers the two things that were silently broken before this fix:
+Covers:
 
-1. `_is_rate_limit_error` (notes_engine.pipeline) / `is_rate_limit_error`
-   (core.exceptions) must see THROUGH the generic wrapper message
-   ("AI generation failed for all configured providers") to the real
-   429/RESOURCE_EXHAUSTED text carried on the exception's __cause__ chain —
-   that's the exact bug that made Stage 3 rate-limit retry never engage.
+1. `is_rate_limit_error` (core.exceptions) must see THROUGH the generic
+   wrapper message ("AI generation failed for all configured providers") to
+   the real 429/RESOURCE_EXHAUSTED text carried on the exception's __cause__
+   chain — that's the bug that made Stage 3 rate-limit retry never engage.
 
-2. SectionedNotesPipeline's per-section retry (`_call_with_rate_limit_retry`)
-   must actually retry on a mocked 429 and succeed once the mock "recovers".
-   `asyncio.sleep` is patched out so this runs in well under a second instead
-   of waiting the real 55-70s backoff.
+2. The concise notes pipeline's `_call_with_rate_limit_retry` must retry on a
+   mocked 429 and succeed once the mock "recovers", then give up after a
+   bounded number of attempts. `asyncio.sleep` is patched out so this runs in
+   well under a second instead of waiting the real backoff.
 
 Run from the backend/ directory:
     python scripts/test_rate_limit_retry.py
@@ -25,7 +24,7 @@ import asyncio
 from unittest.mock import patch
 
 from app.core.exceptions import ExternalServiceError, describe_exception_chain, is_rate_limit_error
-from app.services.notes_engine.pipeline import _SectionCallPacer, _call_with_rate_limit_retry, _is_rate_limit_error
+from app.services.notes_engine.pipeline import _call_with_rate_limit_retry
 
 
 def test_chain_aware_detection() -> None:
@@ -33,15 +32,14 @@ def test_chain_aware_detection() -> None:
         "All Gemini models failed: Gemini REST 429: RESOURCE_EXHAUSTED. Please retry in 32.5s."
     )
 
-    # Mirrors llm_service._generate_json: the outer message NOW embeds the
-    # real cause via describe_exception_chain (the actual fix).
+    # Mirrors llm_service._generate_json: the outer message embeds the real
+    # cause via describe_exception_chain.
     wrapped = ExternalServiceError(
         f"AI generation failed for all configured providers: {describe_exception_chain(real_gemini_error)}"
     )
     wrapped.__cause__ = real_gemini_error
     assert "429" in wrapped.message, "fix regressed: real error text missing from wrapper message"
     assert is_rate_limit_error(wrapped)
-    assert _is_rate_limit_error(wrapped)
 
     # Belt-and-suspenders: even if a caller wraps WITHOUT embedding the cause
     # in the message, walking __cause__/__context__ must still catch it.
@@ -49,7 +47,6 @@ def test_chain_aware_detection() -> None:
     bare_wrapped.__cause__ = real_gemini_error
     assert "429" not in bare_wrapped.message  # proves this only works via chain-walking
     assert is_rate_limit_error(bare_wrapped)
-    assert _is_rate_limit_error(bare_wrapped)
 
     # __context__ fallback (raised inside an except block without `from`).
     context_only = ExternalServiceError("Gemini notes generation failed")
@@ -63,7 +60,6 @@ def test_chain_aware_detection() -> None:
 
     unrelated = ExternalServiceError("Gemini returned empty notes content")
     assert not is_rate_limit_error(unrelated)
-    assert not _is_rate_limit_error(unrelated)
 
     print("PASS: chain-aware rate-limit detection (wrapped, bare-wrapped, __context__, unrelated)")
 
@@ -72,7 +68,7 @@ async def test_retry_engages_and_recovers() -> None:
     real_gemini_error = RuntimeError("Gemini REST 429: RESOURCE_EXHAUSTED. Please retry in 1.0s.")
     attempts: list[int] = []
 
-    async def fake_generate_section_json(system_prompt, user_prompt, schema, max_tokens, temperature):
+    async def fake_generate_notes_json(system_prompt, user_prompt, schema, max_tokens, temperature):
         attempts.append(len(attempts) + 1)
         if len(attempts) < 3:
             raise ExternalServiceError(
@@ -85,18 +81,13 @@ async def test_retry_engages_and_recovers() -> None:
     async def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
-    pacer = _SectionCallPacer(0.0)  # inter-call pacing isn't what this test targets
     with patch("asyncio.sleep", side_effect=fake_sleep):
         result, meta = await _call_with_rate_limit_retry(
-            fake_generate_section_json,
+            fake_generate_notes_json,
             "system prompt",
             "user prompt",
-            {},
-            100,
-            0.3,
-            section_id="core_working",
-            topic="Photosynthesis",
-            pacer=pacer,
+            topic="Binary Search Trees",
+            stage="generate",
         )
 
     assert attempts == [1, 2, 3], f"expected 3 attempts, got {attempts}"
@@ -119,19 +110,14 @@ async def test_gives_up_after_max_attempts() -> None:
     async def fake_sleep(seconds: float) -> None:
         return None
 
-    pacer = _SectionCallPacer(0.0)
     with patch("asyncio.sleep", side_effect=fake_sleep):
         try:
             await _call_with_rate_limit_retry(
                 always_rate_limited,
                 "system prompt",
                 "user prompt",
-                {},
-                100,
-                0.3,
-                section_id="viva",
-                topic="Photosynthesis",
-                pacer=pacer,
+                topic="Binary Search Trees",
+                stage="generate",
             )
         except ExternalServiceError:
             pass

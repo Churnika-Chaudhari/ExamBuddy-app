@@ -17,7 +17,7 @@ from app.repositories.notes_repository import NotesRepository
 from app.repositories.stats_repository import StatsRepository
 from app.services.ai.ai_service import AIService
 from app.services.llm_service import compact_analysis_context, extract_pyq_questions_for_topic
-from app.services.ai.prompts import PROMPT_VERSION
+from app.services.notes_engine.schema import CONCISE_ENGINE_ID, CONCISE_PROMPT_VERSION
 from app.services.generated_note_mapper import map_generated_note
 from app.services.pipeline.notes_pipeline import NotesPipeline
 from app.services.mappers import map_document_response
@@ -106,8 +106,13 @@ class NotesService:
                 user_id, topic_key, analysis_id=analysis_id, subject=subject_name
             )
             if cached and cached.get("notes"):
-                cached_version = (cached.get("ai_metadata") or {}).get("prompt_version")
-                if cached_version == PROMPT_VERSION:
+                # Notes cached by an older engine are long-form chapters, not the
+                # concise 7-section format — regenerate instead of serving them.
+                cached_meta = cached.get("ai_metadata") or {}
+                if (
+                    cached_meta.get("prompt_version") == CONCISE_PROMPT_VERSION
+                    and cached_meta.get("notes_engine") == CONCISE_ENGINE_ID
+                ):
                     logger.info("Returning cached notes for topic=%s", topic)
                     return map_generated_note(cached, cached=True)
 
@@ -116,6 +121,9 @@ class NotesService:
         )
         preserve_saved = bool(existing and existing.get("is_saved"))
 
+        # Stage 3 takes subject + topic only. PYQ/RAG text is used upstream to
+        # discover and name the topic, never to write the notes. Frequency is
+        # still resolved here because it is stored with the note.
         ctx = await self._prepare_topic_generation(
             user_id,
             topic,
@@ -127,30 +135,24 @@ class NotesService:
             total_marks=total_marks,
             priority=priority,
             unit=unit,
+            include_rag=False,
         )
         subject = ctx["subject"]
         frequency = ctx["frequency"]
-        rag_context = ctx["rag_context"]
         rag_sources = ctx["rag_sources"]
 
         logger.info(
-            "Generating notes topic=%s user=%s rag_chunks=%d regenerate=%s priority=%s",
+            "Generating concise notes topic=%s subject=%s user=%s frequency=%s regenerate=%s",
             topic,
+            subject,
             user_id,
-            len(rag_sources),
+            frequency,
             regenerate,
-            priority,
         )
 
         result, metadata = await self.ai_service.generate_topic_notes(
             topic,
-            rag_context=rag_context,
-            analysis_context=ctx["analysis_context"],
             subject=subject,
-            rag_sources=rag_sources,
-            pipeline_context=ctx["pipeline_context"],
-            exam_priority=ctx["exam_priority"],
-            pyq_questions=ctx["pyq_questions"],
         )
 
         notes_text = (result.get("notes") or result.get("content") or "").strip()
@@ -215,8 +217,16 @@ class NotesService:
         total_marks: float | None = None,
         priority: str | None = None,
         unit: str | None = None,
+        include_rag: bool = True,
     ) -> dict[str, Any]:
-        """Shared context gathering for generate + stream paths."""
+        """
+        Shared context gathering for generate + stream paths.
+
+        `include_rag=False` (the Stage-3 concise notes path) skips RAG
+        retrieval and PYQ snippet extraction entirely — that context is no
+        longer an input to notes generation, so fetching it would only add
+        latency.
+        """
         from app.utils.topic_priority import exam_priority_label
 
         analysis_context = ""
@@ -228,25 +238,30 @@ class NotesService:
             analysis_doc = await self.analysis_repo.get_by_id_and_user(analysis_id, user_id)
             if not analysis_doc:
                 raise NotFoundError("Analysis not found")
-            analysis_context = self._build_analysis_context(analysis_doc)
-            pyq_questions = extract_pyq_questions_for_topic(analysis_doc, topic)
             subject = subject or analysis_doc.get("subject")
             document_ids = [str(d) for d in analysis_doc.get("document_ids", [])]
+            if include_rag:
+                analysis_context = self._build_analysis_context(analysis_doc)
+                pyq_questions = extract_pyq_questions_for_topic(analysis_doc, topic)
 
-        rag_context, rag_sources = await self.rag_retriever.retrieve_for_topic(
-            user_id,
-            topic,
-            subject=subject,
-            analysis_document_ids=document_ids or None,
-        )
+        rag_context = ""
+        rag_sources: list[dict[str, Any]] = []
+        if include_rag:
+            rag_context, rag_sources = await self.rag_retriever.retrieve_for_topic(
+                user_id,
+                topic,
+                subject=subject,
+                analysis_document_ids=document_ids or None,
+            )
 
         pipeline_context = ""
         exam_priority = ""
         occ = occurrence_count if occurrence_count is not None else frequency
         if analysis_doc:
-            pipeline_context = self.notes_pipeline.build_notes_context(
-                topic, analysis_doc, frequency=occ
-            )
+            if include_rag:
+                pipeline_context = self.notes_pipeline.build_notes_context(
+                    topic, analysis_doc, frequency=occ
+                )
             if not occ:
                 for row in analysis_doc.get("topic_frequency_table") or []:
                     if str(row.get("topic", "")).lower() == topic.lower():

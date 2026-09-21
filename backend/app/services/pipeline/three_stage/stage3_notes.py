@@ -1,37 +1,30 @@
 """
-Stage 3 — Textbook-quality exam notes generation (v30 sectioned engine).
+Stage 3 — Concise exam-notes generation (v40 concise engine).
 
 Purpose:
-  Produce a complete, NotebookLM-quality university engineering exam-notes
-  chapter for ONE normalized topic, covering every required heading
-  (Definition, Core Concept, Working Principle, Architecture, Flow Diagram,
-  Formula, Algorithm, Example, Advantages/Disadvantages, Applications,
-  Comparison, PYQ Perspective, 2/5/10-Mark Answers, Viva, Interview, Common
-  Mistakes, Memory Tricks, Revision Notes, Keywords, Summary).
+  Produce short, exam-ready revision notes for ONE normalized topic with
+  exactly seven sections: Definition, Working, Advantages, Disadvantages,
+  Applications, Example, Quick Revision (target 300-600 words).
 
 Inputs (only):
   - Subject
   - Topic (Stage 2 textbook name)
-  - Exam Priority (High / Medium / Low / Standard)
 
 Architecture:
-  A full chapter is NEVER produced in one call. SectionedNotesPipeline issues
-  ~11 focused Gemini calls (batches), each with its own compact responseSchema,
-  merges the results, and renders ONE long-form markdown document
-  (~2500-5000 words).
-
-Outputs:
-  - Markdown notes + structured JSON (all section fields, for storage/API)
+  ONE focused Gemini structured-JSON call, plus at most one scoped repair
+  call when validation fails. (Replaces the v30 sectioned engine's 11 paced
+  batch calls, which existed to build a long textbook chapter.)
 
 Isolation rules:
-  - Never receives PYQ text, RAG, analysis snippets, or question wording.
-  - Never invents actual PYQs — only question PATTERNS.
-  - UNKNOWN_TOPIC when the topic is too ambiguous to teach accurately.
+  - Never receives PYQ text, RAG passages, or question wording — a PYQ only
+    identifies which topic to write about.
+  - Never mentions PYQs, marks, AI, or the generation process.
+  - UNKNOWN_TOPIC when the topic is not a teachable engineering concept.
 
 Failure modes:
-  - Any batch invalid after its one repair attempt -> NotesSchemaError
-    (structured backend error) — NO local template / fake notes fallback.
-  - UNKNOWN_TOPIC -> NotesValidationError
+  - Invalid after the repair attempt -> NotesSchemaError (structured error).
+  - Empty / placeholder output -> ExternalServiceError.
+  - No local template / fake-notes fallback, ever.
 """
 
 from __future__ import annotations
@@ -41,16 +34,19 @@ from typing import Any, Awaitable, Callable
 
 from app.core.exceptions import ExternalServiceError
 from app.services.ai.notes_sanitizer import is_placeholder_notes
-from app.services.notes_engine.pipeline import SectionedNotesPipeline
-from app.services.notes_engine.prompt_builder import normalize_exam_priority
-from app.services.notes_engine.schema import SECTIONED_ENGINE_ID, SECTIONED_PROMPT_VERSION
-from app.services.notes_engine.validator import NotesSchemaError
+from app.services.notes_engine.pipeline import ConciseNotesPipeline
+from app.services.notes_engine.prompt_builder import clean_topic, normalize_exam_priority
+from app.services.notes_engine.schema import (
+    CONCISE_ENGINE_ID,
+    CONCISE_PROMPT_VERSION,
+    NOTES_TOP_P,
+)
 from app.services.pipeline.three_stage.models import PIPELINE_VERSION
 
 logger = logging.getLogger("exambuddy.pipeline.stage3")
 
 # (system_prompt, user_prompt, response_schema, max_output_tokens, temperature)
-GenerateSectionJsonFn = Callable[
+GenerateNotesJsonFn = Callable[
     [str, str, dict[str, Any], int, float], Awaitable[tuple[dict[str, Any], dict[str, Any]]]
 ]
 
@@ -62,13 +58,16 @@ def build_stage3_notes_inputs(
     frequency: int | None = None,
     exam_priority: str = "",
 ) -> dict[str, Any]:
-    """Canonical Stage 3 input bundle — no PYQ/RAG/pipeline text."""
-    priority = normalize_exam_priority(exam_priority, frequency=frequency)
+    """Canonical Stage 3 input bundle — no PYQ/RAG/pipeline text.
+
+    Exam priority is still normalized for ordering/analytics upstream, but it
+    is not sent to the model: concise notes have one fixed depth.
+    """
     return {
-        "topic": (topic or "").strip(),
+        "topic": clean_topic(topic),
         "subject": (subject or "General").strip() or "General",
         "frequency": frequency,
-        "exam_priority": priority,
+        "exam_priority": normalize_exam_priority(exam_priority, frequency=frequency),
     }
 
 
@@ -76,20 +75,17 @@ async def run_stage3_notes(
     *,
     topic: str,
     subject: str | None = None,
-    exam_priority: str = "",
-    generate_section_json: GenerateSectionJsonFn,
+    generate_notes_json: GenerateNotesJsonFn,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
-    Run Stage 3 sectioned notes generation.
+    Run Stage 3 concise notes generation.
 
     Returns (result, metadata) where result has notes/summary/structured/word_count.
     """
-    pipeline = SectionedNotesPipeline()
-    result, metadata = await pipeline.run(
+    result, metadata = await ConciseNotesPipeline().run(
         topic=topic,
         subject=subject,
-        exam_priority=exam_priority,
-        generate_section_json=generate_section_json,
+        generate_notes_json=generate_notes_json,
     )
 
     notes_text = (result.get("notes") or "").strip()
@@ -103,10 +99,10 @@ async def run_stage3_notes(
         {
             "pipeline_version": PIPELINE_VERSION,
             "pipeline_stage": 3,
-            "prompt_version": SECTIONED_PROMPT_VERSION,
-            "notes_engine": SECTIONED_ENGINE_ID,
-            "notes_input": "subject_topic_exam_priority_only",
-            "generation_mode": "ai_sectioned",
+            "prompt_version": CONCISE_PROMPT_VERSION,
+            "notes_engine": CONCISE_ENGINE_ID,
+            "notes_input": "subject_topic_only",
+            "generation_mode": "ai_concise",
             "structured_json_mode": True,
         }
     )
@@ -115,35 +111,31 @@ async def run_stage3_notes(
     return result, metadata
 
 
-def stage3_generate_json_factory(llm_service) -> GenerateSectionJsonFn:
-    """Build the per-section Gemini structured-JSON callback used by Stage 3.
+def stage3_generate_json_factory(llm_service) -> GenerateNotesJsonFn:
+    """Build the structured-JSON callback Stage 3 hands to the notes pipeline."""
 
-    Each section batch supplies its own responseSchema / max_output_tokens /
-    temperature — small and focused, never one mega-call.
-    """
-
-    async def _generate_section_json(
+    async def _generate_notes_json(
         system_prompt: str,
         user_prompt: str,
         response_schema: dict[str, Any],
         max_output_tokens: int,
         temperature: float,
     ):
-        return await llm_service.generate_notes_section_json(
+        return await llm_service.generate_structured_notes_json(
             system_prompt,
             user_prompt,
             response_schema=response_schema,
             max_output_tokens=max_output_tokens,
             temperature=temperature,
-            top_p=0.9,
+            top_p=NOTES_TOP_P,
         )
 
-    return _generate_section_json
+    return _generate_notes_json
 
 
 __all__ = [
     "build_stage3_notes_inputs",
     "run_stage3_notes",
     "stage3_generate_json_factory",
-    "GenerateSectionJsonFn",
+    "GenerateNotesJsonFn",
 ]

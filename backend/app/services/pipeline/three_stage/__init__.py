@@ -3,7 +3,7 @@ ExamBuddy four-stage education pipeline.
 
 Stage 1 — Extract topics from PYQs (JSON only, no notes)
 Stage 2 — Normalize to standard engineering textbook names
-Stage 3 — Generate exam notes (Subject / Topic / Exam Priority only)
+Stage 3 — Generate concise exam notes (Subject / Topic only)
 Stage 4 — Generate quizzes from analysis + optional notes context
 
 Public API routes are unchanged; stages are composed by services.

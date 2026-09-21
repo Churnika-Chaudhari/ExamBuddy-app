@@ -17,7 +17,6 @@ from app.services.ai.notes_sanitizer import sanitize_note_text
 from app.services.llm_service import LLMService, should_skip_pyq_llm
 from app.utils.topic_extractor import sanitize_analysis_result
 from app.services.ai.notes_structured import (
-    extract_structured_payload,
     is_structured_notes_result,
     structured_notes_to_markdown,
 )
@@ -31,8 +30,11 @@ from app.services.ai.prompts import (
     PYQ_ANALYSIS_USER_PROMPT,
     QUIZ_GENERATE_SYSTEM_PROMPT,
     QUIZ_GENERATE_USER_PROMPT,
-    TOPIC_NOTES_SYSTEM_PROMPT,
-    TOPIC_NOTES_USER_PROMPT,
+)
+from app.services.notes_engine.validator import NotesValidationError
+from app.services.pipeline.three_stage.stage3_notes import (
+    run_stage3_notes,
+    stage3_generate_json_factory,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,12 +97,12 @@ def clean_notes_markdown(text: str) -> str:
 def _friendly_ai_error(message: str) -> str:
     lower = message.lower()
     if "429" in message or "quota" in lower:
-        return "Gemini API quota exceeded. Notes generated from local template — retry later for AI notes."
+        return "AI quota exceeded. Wait a minute and tap Regenerate."
     if "401" in message or "403" in message or "api key" in lower:
-        return "Invalid or missing API key. Notes generated from local template."
+        return "Invalid or missing AI API key. Check the backend configuration."
     if "404" in message and "model" in lower:
-        return "AI model unavailable. Notes generated from local template."
-    return "AI generation failed. Notes generated from local template."
+        return "AI model unavailable. Try again shortly."
+    return "AI notes generation failed. Try Regenerate in a moment."
 
 
 class AIService:
@@ -269,140 +271,42 @@ class AIService:
         }
         return result, metadata
 
-    def _local_topic_notes(
-        self,
-        topic: str,
-        subject: str | None,
-        *,
-        rag_context: str = "",
-        analysis_context: str = "",
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        subject_label = subject or "Study"
-        retrieved_hint = ""
-        if rag_context.strip():
-            retrieved_hint = "\n\nUse syllabus-standard knowledge aligned with your uploaded materials.\n"
-
-        content = f"""# {topic}
-
-## Definition
-**{topic}** is a core concept in {subject_label}.{retrieved_hint}
-
-## Introduction
-Covers the purpose of **{topic}**, the problem it solves, and how it fits in the syllabus.
-
-## Why it is used
-- Practical need this concept addresses in real systems
-
-## Working Principle
-- Step through the underlying idea in plain language
-
-## Detailed Explanation
-Explain components, rules, variants, and related terms for **{topic}**.
-
-## Example
-Worked example: input -> process -> output for **{topic}**.
-
-## Advantages
-- Concrete benefit of using **{topic}**
-
-## Disadvantages
-- Concrete limitation or trade-off
-
-## Key Points to Remember
-- Formal definition
-- One worked example
-- One comparison with a related concept
-
-## Summary
-Definition, working, and one example for **{topic}**."""
-        meta: dict[str, Any] = {
-            "provider": "local",
-            "model": "rule-based",
-            "prompt_version": PROMPT_VERSION,
-            "rag_chunk_count": 1 if rag_context.strip() else 0,
-        }
-        return {
-            "notes": content,
-            "summary": f"Structured notes for {topic}. Configure AI keys for RAG-enhanced generation.",
-        }, meta
-
-    def _normalize_topic_result(self, result: dict[str, Any], *, topic: str = "") -> dict[str, Any]:
-        structured: dict[str, Any] | None = None
-
-        if is_structured_notes_result(result):
-            structured = extract_structured_payload(result)
-            if topic and not structured.get("topic"):
-                structured["topic"] = topic
-            notes = structured_notes_to_markdown(structured)
-            summary = clean_notes_markdown(str(structured.get("summary") or result.get("summary") or "")).strip()
-            return {
-                "notes": clean_notes_markdown(notes),
-                "summary": summary or None,
-                "structured": structured,
-            }
-
-        notes = (
-            result.get("notes")
-            or result.get("content")
-            or result.get("markdown")
-            or ""
-        )
-        if isinstance(notes, dict):
-            notes = str(notes)
-        notes = clean_notes_markdown(str(notes))
-        summary = clean_notes_markdown(str(result.get("summary") or "")).strip()
-        return {"notes": notes, "summary": summary or None, "structured": None}
-
     async def generate_topic_notes(
         self,
         topic: str,
         *,
-        rag_context: str = "",
-        analysis_context: str = "",
         subject: str | None = None,
-        rag_sources: list[dict[str, Any]] | None = None,
-        pipeline_context: str = "",
-        exam_priority: str = "",
-        pyq_questions: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """
+        Stage 3 — concise 7-section revision notes for ONE topic.
+
+        Inputs are deliberately limited to subject and topic: no RAG passages,
+        no PYQ text, no analysis snippets. A provider or validation failure is
+        raised, never replaced by a local template — silent fake notes are
+        worse than a visible error.
+        """
         if not self.ai_available:
-            result, meta = self._local_topic_notes(
-                topic, subject, rag_context=rag_context, analysis_context=analysis_context
+            raise ExternalServiceError(
+                "Configure GEMINI_API_KEY (or OpenAI/Groq) in backend .env to generate notes"
             )
-            if rag_sources:
-                meta["rag_sources"] = rag_sources[:8]
-            return result, meta
 
         try:
-            result, metadata = await self.llm_service.generate_topic_notes_json(
-                topic,
-                rag_context=rag_context,
-                analysis_context=analysis_context,
+            result, metadata = await run_stage3_notes(
+                topic=topic,
                 subject=subject,
-                pipeline_context=pipeline_context,
-                exam_priority=exam_priority,
-                pyq_questions=pyq_questions,
+                generate_notes_json=stage3_generate_json_factory(self.llm_service),
             )
-            result = self._normalize_topic_result(result, topic=topic)
-            if rag_sources:
-                metadata["rag_sources"] = rag_sources[:8]
-                metadata["rag_chunk_count"] = len(rag_sources)
-            metadata["generation_mode"] = "rag" if rag_context.strip() else "ai_only"
-            if result.get("structured"):
-                metadata["structured_notes"] = result["structured"]
-            if not result.get("notes"):
-                raise ExternalServiceError("AI returned empty notes content")
-            return result, metadata
+        except (ExternalServiceError, NotesValidationError):
+            raise
         except Exception as exc:
-            logger.error("Topic notes generation failed: %s", exc)
-            result, meta = self._local_topic_notes(
-                topic, subject, rag_context=rag_context, analysis_context=analysis_context
-            )
-            meta["generation_error"] = _friendly_ai_error(str(exc))
-            meta["ai_error"] = str(exc)
-            if rag_sources:
-                meta["rag_sources"] = rag_sources[:8]
-            return result, meta
+            logger.error("Topic notes generation failed topic=%r: %s", topic, exc)
+            raise ExternalServiceError(_friendly_ai_error(str(exc))) from exc
+
+        notes = clean_notes_markdown(str(result.get("notes") or ""))
+        if not notes:
+            raise ExternalServiceError("AI returned empty notes content")
+        result["notes"] = notes
+        return result, metadata
 
     async def stream_topic_notes(
         self,

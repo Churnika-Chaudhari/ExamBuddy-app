@@ -194,6 +194,7 @@ class LLMService:
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if not self.providers:
             raise ExternalServiceError("Configure Groq, OpenAI, or Gemini API key in backend .env")
@@ -208,6 +209,7 @@ class LLMService:
                         max_output_tokens=max_output_tokens,
                         temperature=temperature if temperature is not None else NOTES_TEMPERATURE,
                         top_p=top_p if top_p is not None else NOTES_TOP_P,
+                        response_schema=response_schema,
                     )
                 except TypeError:
                     result, metadata = await provider.generate_json(
@@ -219,6 +221,26 @@ class LLMService:
                 logger.error("%s JSON generation failed: %s", name, exc)
                 last_exc = exc
         raise ExternalServiceError("AI generation failed for all configured providers") from last_exc
+
+    async def generate_structured_notes_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        response_schema: dict[str, Any],
+        max_output_tokens: int,
+        temperature: float,
+        top_p: float = NOTES_TOP_P,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """One schema-constrained JSON call — used by the Stage-3 concise notes engine."""
+        return await self._generate_json(
+            system_prompt,
+            user_prompt,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            response_schema=response_schema,
+        )
 
     def build_topic_notes_prompts(
         self,

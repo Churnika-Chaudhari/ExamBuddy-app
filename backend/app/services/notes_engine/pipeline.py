@@ -1,169 +1,109 @@
 """
-Sectioned Exam Notes Pipeline (v30) — NotebookLM-style multi-call orchestrator.
-
-CRITICAL DESIGN RULE: a full chapter is NEVER produced in one LLM call.
+Concise exam-notes pipeline (v40).
 
 Flow:
-  Topic → 11 focused section batches (see schema.SECTION_ORDER), each with its
-  own compact responseSchema → per-batch validate (+ single scoped repair on
-  failure) → merge into one structured dict → render ONE long-form markdown
-  document covering every required heading → final quality/heading/word-count
-  gate.
+  Subject + Topic
+    -> ONE focused Gemini structured-JSON call (seven short sections)
+    -> normalize + validate + render markdown
+    -> on failure, ONE scoped repair call carrying the exact validation errors
+    -> final document gate (headings, banned meta, 200-800 word band)
 
-Batch 1 ("topic_definition_intro") runs first and alone: it both gates
-UNKNOWN_TOPIC refusals and seeds a short context recap fed to every later
-batch so the document reads as one coherent chapter rather than 11 disjoint
-answers. Batches 2-11 then run with DEFAULT_SECTION_CONCURRENCY (1 by
-default, free-tier friendly) and a minimum inter-call spacing so the 11
-calls/topic stay under typical Gemini free-tier rate limits (~5 RPM).
+This replaces the v30 sectioned engine, which issued 11 batch calls paced
+~14s apart to survive free-tier RPM limits while assembling a 2500+ word
+chapter. With one (at most two) calls per topic that pacing is unnecessary;
+only a bounded 429 retry remains.
 
-On any batch failing validation after its one repair attempt, the whole
-generation raises NotesSchemaError — there is no local template / fake-notes
-fallback for Stage 3.
+There is no local-template fallback: if the model cannot produce valid notes,
+the caller gets a structured error. The one exception is length — a note that
+is complete and accurate but longer than the 600-word target is served (with
+the overrun recorded in metadata) after the shorten-rewrite attempt, since
+discarding correct notes over verbosity helps nobody.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import Any, Awaitable, Callable
 
 from app.core.exceptions import is_rate_limit_error, suggested_retry_delay_seconds
-from app.services.notes_engine.markdown_formatter import render_sectioned_markdown
+from app.services.notes_engine.markdown_formatter import (
+    build_summary,
+    extract_concise_payload,
+    normalize_concise_payload,
+    render_concise_markdown,
+)
 from app.services.notes_engine.prompt_builder import (
-    build_context_recap,
-    build_section_prompts,
-    build_section_repair_prompt,
+    build_concise_notes_prompts,
+    build_concise_repair_prompts,
+    clean_topic,
     is_unknown_topic_payload,
-    normalize_exam_priority,
 )
 from app.services.notes_engine.schema import (
-    SECTION_MAX_OUTPUT_TOKENS,
-    SECTION_ORDER,
-    SECTION_SCHEMAS,
-    SECTION_TEMPERATURE,
-    SECTION_TITLES,
-    SECTIONED_ENGINE_ID,
-    SECTIONED_PROMPT_VERSION,
+    CONCISE_ENGINE_ID,
+    CONCISE_NOTES_RESPONSE_SCHEMA,
+    CONCISE_PROMPT_VERSION,
+    NOTES_MAX_OUTPUT_TOKENS,
+    NOTES_TEMPERATURE,
 )
 from app.services.notes_engine.token_utils import NotesGenerationTrace
 from app.services.notes_engine.validator import (
     NotesSchemaError,
     NotesValidationError,
     count_words,
+    score_notes_quality,
+    validate_concise_payload,
     validate_final_notes,
-    validate_section_payload,
+    word_count_status,
 )
 
 logger = logging.getLogger("exambuddy.notes_engine.pipeline")
 
 # (system_prompt, user_prompt, response_schema, max_output_tokens, temperature) -> (json, metadata)
-GenerateSectionJsonFn = Callable[
+GenerateNotesJsonFn = Callable[
     [str, str, dict[str, Any], int, float], Awaitable[tuple[dict[str, Any], dict[str, Any]]]
 ]
 
-# Bounded concurrency for batches 2-11. Gemini FREE-TIER keys allow only
-# ~5 requests/minute — 11 section calls at any concurrency > 1 blows past
-# that almost immediately. Keep this at 1 (fully sequential) unless you know
-# your key has a paid-tier quota; see SECTION_CALL_MIN_SPACING_SECONDS below
-# for the actual pacing that keeps free-tier keys under quota.
-DEFAULT_SECTION_CONCURRENCY = 1
-
-# Minimum spacing enforced between the START of consecutive Gemini section
-# calls (across the whole pipeline run, regardless of concurrency). Gemini
-# free tier is ~5 requests/minute (12s/call); 14s of headroom keeps 11
-# sequential section calls (~2.5 min/topic) comfortably under that even
-# before any 429 backoff kicks in.
-SECTION_CALL_MIN_SPACING_SECONDS = 14.0
-
-# 11 focused calls per topic can trip a tight per-minute quota (esp. Gemini
-# free-tier keys). Retry with backoff on rate-limit errors instead of failing
-# the whole document — a transient 429 on one batch should not waste the 10
-# batches that already succeeded.
-#
-# Free-tier 429s are per-minute-window errors, not instant-retry errors —
-# backing off 12-35s (the old values) routinely retries into the SAME
-# still-exhausted window. 55-70s comfortably clears a full RPM window before
-# retrying, and only 3 attempts are made (2 backoff waits) so a truly dead
-# key/quota still fails in a bounded time instead of hanging the request.
+# A 429 on a free-tier key is a per-minute-window error, so an instant retry
+# lands in the same exhausted window. Wait out most of a window, but keep the
+# attempt count bounded so a dead key fails in predictable time.
 _RATE_LIMIT_MAX_ATTEMPTS = 3
-_RATE_LIMIT_BACKOFF_SECONDS = (55.0, 70.0)
+_RATE_LIMIT_BACKOFF_SECONDS = (35.0, 60.0)
 
 
-def _is_rate_limit_error(exc: BaseException) -> bool:
-    # Checks exc AND its __cause__ chain — the real 429/quota text usually
-    # lives on the wrapped provider exception, not the outer generic
-    # "AI generation failed for all configured providers" message.
-    return is_rate_limit_error(exc)
-
-
-def _suggested_retry_delay(exc: BaseException, *, attempt: int) -> float:
-    delay = suggested_retry_delay_seconds(exc)
-    if delay is not None:
-        return delay + 1.0
-    idx = min(attempt - 1, len(_RATE_LIMIT_BACKOFF_SECONDS) - 1)
-    return _RATE_LIMIT_BACKOFF_SECONDS[idx]
-
-
-class _SectionCallPacer:
-    """
-    Enforces a minimum spacing between the start of consecutive Gemini
-    section calls, independent of the concurrency semaphore — a cheap,
-    dependency-free way to stay under a free-tier requests-per-minute quota
-    even if concurrency is ever raised above 1.
-    """
-
-    def __init__(self, min_spacing_seconds: float) -> None:
-        self._min_spacing = min_spacing_seconds
-        self._lock = asyncio.Lock()
-        self._last_call_at: float | None = None
-
-    async def wait_turn(self, *, section_id: str = "", topic: str = "") -> None:
-        async with self._lock:
-            now = time.monotonic()
-            if self._last_call_at is not None:
-                remaining = self._min_spacing - (now - self._last_call_at)
-                if remaining > 0:
-                    # Visible in Render logs so slow Stage-3 generations are
-                    # clearly explained (free-tier pacing), not mistaken for
-                    # a hang.
-                    logger.info(
-                        "notes_section pacing topic=%r section=%s waiting %.1fs before next Gemini call (free-tier RPM)",
-                        topic,
-                        section_id,
-                        remaining,
-                    )
-                    await asyncio.sleep(remaining)
-            self._last_call_at = time.monotonic()
+def _retry_delay(exc: BaseException, *, attempt: int) -> float:
+    suggested = suggested_retry_delay_seconds(exc)
+    if suggested is not None:
+        return suggested + 1.0
+    return _RATE_LIMIT_BACKOFF_SECONDS[min(attempt - 1, len(_RATE_LIMIT_BACKOFF_SECONDS) - 1)]
 
 
 async def _call_with_rate_limit_retry(
-    generate_section_json: GenerateSectionJsonFn,
+    generate_notes_json: GenerateNotesJsonFn,
     system_prompt: str,
     user_prompt: str,
-    schema: dict[str, Any],
-    max_tokens: int,
-    temperature: float,
     *,
-    section_id: str,
     topic: str,
-    pacer: _SectionCallPacer,
+    stage: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Call one section batch, retrying with backoff ONLY on rate-limit errors."""
     attempt = 1
     while True:
-        await pacer.wait_turn(section_id=section_id, topic=topic)
         try:
-            return await generate_section_json(system_prompt, user_prompt, schema, max_tokens, temperature)
+            return await generate_notes_json(
+                system_prompt,
+                user_prompt,
+                CONCISE_NOTES_RESPONSE_SCHEMA,
+                NOTES_MAX_OUTPUT_TOKENS,
+                NOTES_TEMPERATURE,
+            )
         except Exception as exc:
-            if attempt >= _RATE_LIMIT_MAX_ATTEMPTS or not _is_rate_limit_error(exc):
+            if attempt >= _RATE_LIMIT_MAX_ATTEMPTS or not is_rate_limit_error(exc):
                 raise
-            delay = _suggested_retry_delay(exc, attempt=attempt)
+            delay = _retry_delay(exc, attempt=attempt)
             logger.warning(
-                "notes_section rate-limited topic=%r section=%s attempt=%d — retrying in %.1fs",
+                "concise_notes rate-limited topic=%r stage=%s attempt=%d — retrying in %.1fs",
                 topic,
-                section_id,
+                stage,
                 attempt,
                 delay,
             )
@@ -171,243 +111,196 @@ async def _call_with_rate_limit_retry(
             attempt += 1
 
 
-class SectionedNotesPipeline:
-    """Production Stage-3 exam-notes pipeline — sectioned, multi-call, merged."""
+class _Document:
+    """A rendered note: structured payload, markdown, and its word count."""
 
-    def __init__(self, *, concurrency: int = DEFAULT_SECTION_CONCURRENCY) -> None:
-        self.concurrency = max(1, concurrency)
-        self._pacer = _SectionCallPacer(SECTION_CALL_MIN_SPACING_SECONDS)
+    def __init__(self, structured: dict[str, Any], markdown: str, word_count: int) -> None:
+        self.structured = structured
+        self.markdown = markdown
+        self.word_count = word_count
 
-    async def _run_section(
-        self,
-        section_id: str,
-        *,
-        topic: str,
-        subject: str | None,
-        exam_priority: str,
-        context_recap: str,
-        generate_section_json: GenerateSectionJsonFn,
-        trace: NotesGenerationTrace,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        schema = SECTION_SCHEMAS[section_id]
-        max_tokens = SECTION_MAX_OUTPUT_TOKENS[section_id]
-        temperature = SECTION_TEMPERATURE.get(section_id, 0.35)
-        title = SECTION_TITLES.get(section_id, section_id)
 
-        system_prompt, user_prompt = build_section_prompts(
-            section_id,
-            topic=topic,
-            subject=subject,
-            exam_priority=exam_priority,
-            context_recap=context_recap,
-        )
+class ConciseNotesPipeline:
+    """Stage-3 engine: one focused Gemini call -> validated 7-section note."""
 
-        trace.mark("section_generate", section=section_id, title=title, attempt=1)
-        logger.info(
-            "notes_section start topic=%r section=%s attempt=1 user_preview=%r",
-            topic,
-            section_id,
-            user_prompt[-300:],
-        )
-        try:
-            raw, meta = await _call_with_rate_limit_retry(
-                generate_section_json,
-                system_prompt,
-                user_prompt,
-                schema,
-                max_tokens,
-                temperature,
-                section_id=section_id,
-                topic=topic,
-                pacer=self._pacer,
-            )
-        except Exception as exc:
-            trace.mark("section_generate_error", section=section_id, attempt=1, error=str(exc)[:200])
-            logger.error("notes_section generate failed topic=%r section=%s: %s", topic, section_id, exc)
-            raise
-
-        # Batch 1 may legitimately refuse via UNKNOWN_TOPIC — never repair that.
-        if section_id == "topic_definition_intro" and is_unknown_topic_payload(raw):
-            return raw, meta
-
-        first_error: NotesValidationError | None = None
-        try:
-            validate_section_payload(section_id, raw)
-            trace.mark("section_validate", section=section_id, ok=True, attempt=1)
-            logger.info(
-                "notes_section ok topic=%r section=%s attempt=1 keys=%s",
-                topic,
-                section_id,
-                list(raw.keys()),
-            )
-            return raw, meta
-        except NotesValidationError as exc:
-            first_error = exc
-            trace.mark("section_validate", section=section_id, ok=False, attempt=1, error=str(exc))
-            logger.warning(
-                "notes_section validation failed topic=%r section=%s — repairing once: %s",
-                topic,
-                section_id,
-                exc,
-            )
-
-        assert first_error is not None
-        first_error_details = list(first_error.details or [])
-        repair_system, repair_user = build_section_repair_prompt(
-            section_id,
-            topic=topic,
-            subject=subject,
-            exam_priority=exam_priority,
-            errors=first_error_details or [str(first_error)],
-            draft=raw,
-        )
-        trace.mark("section_generate", section=section_id, attempt=2, repair=True)
-        try:
-            raw2, meta2 = await _call_with_rate_limit_retry(
-                generate_section_json,
-                repair_system,
-                repair_user,
-                schema,
-                max_tokens,
-                temperature,
-                section_id=section_id,
-                topic=topic,
-                pacer=self._pacer,
-            )
-            validate_section_payload(section_id, raw2)
-            trace.mark("section_validate", section=section_id, ok=True, attempt=2, repaired=True)
-            logger.info("notes_section repaired topic=%r section=%s attempt=2", topic, section_id)
-            return raw2, meta2
-        except Exception as exc2:
-            trace.mark("section_generate_error", section=section_id, attempt=2, error=str(exc2)[:200])
-            logger.error(
-                "notes_section failed after repair topic=%r section=%s: %s", topic, section_id, exc2
-            )
-            raise NotesSchemaError(
-                f"Section '{title}' failed validation after one repair attempt",
-                details=[
-                    {"section": section_id, "title": title, "error": str(exc2)[:300]},
-                    *first_error_details,
-                ],
-            ) from exc2
+    engine_id = CONCISE_ENGINE_ID
+    prompt_version = CONCISE_PROMPT_VERSION
 
     async def run(
         self,
         *,
         topic: str,
-        subject: str | None,
-        exam_priority: str,
-        generate_section_json: GenerateSectionJsonFn,
+        subject: str | None = None,
+        generate_notes_json: GenerateNotesJsonFn,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        trace = NotesGenerationTrace(topic=topic, subject=subject or "")
-        priority = normalize_exam_priority(exam_priority)
+        clean = clean_topic(topic) or (topic or "").strip()
+        subject_name = (subject or "General").strip() or "General"
+        trace = NotesGenerationTrace(topic=clean, subject=subject_name)
 
-        # Batch 1 runs alone — it seeds context recap + gates UNKNOWN_TOPIC.
-        seed, seed_meta = await self._run_section(
-            "topic_definition_intro",
-            topic=topic,
-            subject=subject,
-            exam_priority=priority,
-            context_recap="",
-            generate_section_json=generate_section_json,
-            trace=trace,
+        system_prompt, user_prompt = build_concise_notes_prompts(
+            topic=clean, subject=subject_name
         )
-        if is_unknown_topic_payload(seed):
+        logger.info("concise_notes start topic=%r subject=%r", clean, subject_name)
+        trace.mark("generate", attempt=1)
+        raw, provider_meta = await _call_with_rate_limit_retry(
+            generate_notes_json, system_prompt, user_prompt, topic=clean, stage="generate"
+        )
+        logger.info("concise_notes response topic=%r preview=%r", clean, str(raw)[:400])
+
+        if is_unknown_topic_payload(raw):
             trace.mark("validate", ok=False, error="UNKNOWN_TOPIC")
             raise NotesValidationError(
-                f"UNKNOWN_TOPIC: '{topic}' is too ambiguous for textbook notes",
+                f"UNKNOWN_TOPIC: '{clean}' is not a teachable engineering topic",
                 code="UNKNOWN_TOPIC",
                 details=[{"field": "topic", "error": "UNKNOWN_TOPIC"}],
             )
 
-        structured: dict[str, Any] = {k: v for k, v in seed.items() if k != "status"}
-        provider_meta = dict(seed_meta or {})
-        context_recap = build_context_recap(structured, topic=topic)
+        calls = 1
+        repaired = False
+        overrun = False
 
-        remaining = [s for s in SECTION_ORDER if s != "topic_definition_intro"]
-        semaphore = asyncio.Semaphore(self.concurrency)
+        try:
+            document = self._build_document(raw, topic=clean, subject=subject_name)
+            trace.mark("validate", ok=True, attempt=1, word_count=document.word_count)
+        except NotesValidationError as first_error:
+            trace.mark("validate", ok=False, attempt=1, error=str(first_error))
+            logger.warning(
+                "concise_notes validation failed topic=%r — repairing once: %s (%s)",
+                clean,
+                first_error,
+                first_error.details,
+            )
+            document, provider_meta, overrun = await self._repair(
+                raw,
+                first_error,
+                topic=clean,
+                subject=subject_name,
+                generate_notes_json=generate_notes_json,
+                trace=trace,
+                provider_meta=provider_meta,
+            )
+            calls = 2
+            repaired = True
 
-        async def _worker(section_id: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
-            async with semaphore:
-                data, meta = await self._run_section(
-                    section_id,
-                    topic=topic,
-                    subject=subject,
-                    exam_priority=priority,
-                    context_recap=context_recap,
-                    generate_section_json=generate_section_json,
-                    trace=trace,
-                )
-                return section_id, data, meta
-
-        results = await asyncio.gather(*[_worker(section_id) for section_id in remaining])
-        for section_id, data, meta in results:
-            structured.update(data)
-            if meta:
-                provider_meta = meta
-
-        structured["topic"] = structured.get("topic") or topic
-        structured["subject"] = subject or "General"
-        structured["exam_priority"] = priority
-
-        markdown = render_sectioned_markdown(structured)
-        word_count = count_words(markdown)
-        trace.mark("assemble", word_count=word_count, chars=len(markdown), sections=len(SECTION_ORDER))
+        quality = score_notes_quality(document.structured, document.markdown)
+        length_status = word_count_status(document.word_count)
         logger.info(
-            "notes_pipeline assembled topic=%r subject=%r word_count=%d chars=%d",
-            topic,
-            subject,
-            word_count,
-            len(markdown),
+            "concise_notes ok topic=%r subject=%r word_count=%d chars=%d calls=%d repaired=%s length=%s",
+            clean,
+            subject_name,
+            document.word_count,
+            len(document.markdown),
+            calls,
+            repaired,
+            length_status,
         )
 
-        validate_final_notes(markdown, structured, word_count=word_count)
-        trace.mark("validate", ok=True, word_count=word_count)
-
-        quality = {
-            "word_count": word_count,
-            "chars": len(markdown),
-            "sections_completed": len(SECTION_ORDER),
-            "has_diagram": bool(structured.get("diagram")),
-            "viva_count": len(structured.get("viva") or []),
-            "interview_count": len(structured.get("interview") or []),
-        }
-
-        meta = dict(provider_meta)
-        meta.update(
+        metadata = dict(provider_meta or {})
+        metadata.update(
             {
-                "prompt_version": SECTIONED_PROMPT_VERSION,
-                "notes_engine": SECTIONED_ENGINE_ID,
+                "prompt_version": CONCISE_PROMPT_VERSION,
+                "notes_engine": CONCISE_ENGINE_ID,
+                "generation_mode": "ai_concise",
                 "structured_json_mode": True,
-                "generation_mode": "ai_sectioned",
-                "word_count": word_count,
+                "gemini_calls": calls,
+                "repaired": repaired,
+                "word_count": document.word_count,
+                "word_count_status": length_status,
+                "word_count_over_limit": overrun,
                 "quality": quality,
-                "section_count": len(SECTION_ORDER),
             }
         )
-        meta.update(trace.as_metadata())
+        metadata.update(trace.as_metadata())
 
         result = {
-            "notes": markdown,
-            "summary": structured.get("summary"),
-            "structured": structured,
-            "word_count": word_count,
+            "notes": document.markdown,
+            "summary": build_summary(document.structured) or None,
+            "structured": extract_concise_payload(document.structured),
+            "word_count": document.word_count,
         }
-        return result, meta
+        return result, metadata
+
+    def _build_document(
+        self, raw: dict[str, Any], *, topic: str, subject: str
+    ) -> _Document:
+        """Normalize -> validate sections -> render -> validate document."""
+        structured = normalize_concise_payload(raw, topic=topic)
+        structured["topic"] = structured.get("topic") or topic
+        structured["subject"] = subject
+
+        validate_concise_payload(structured, topic=topic)
+        markdown = render_concise_markdown(structured)
+        word_count = count_words(markdown)
+        validate_final_notes(markdown, structured, word_count=word_count)
+        return _Document(structured, markdown, word_count)
+
+    async def _repair(
+        self,
+        draft: dict[str, Any],
+        first_error: NotesValidationError,
+        *,
+        topic: str,
+        subject: str,
+        generate_notes_json: GenerateNotesJsonFn,
+        trace: NotesGenerationTrace,
+        provider_meta: dict[str, Any],
+    ) -> tuple[_Document, dict[str, Any], bool]:
+        """One scoped rewrite. Returns (document, provider_meta, overran_length)."""
+        errors = list(first_error.details or []) or [{"error": str(first_error)}]
+        repair_system, repair_user = build_concise_repair_prompts(
+            topic=topic, subject=subject, errors=errors, draft=draft
+        )
+        trace.mark("generate", attempt=2, repair=True)
+        raw, repair_meta = await _call_with_rate_limit_retry(
+            generate_notes_json, repair_system, repair_user, topic=topic, stage="repair"
+        )
+        provider_meta = repair_meta or provider_meta
+
+        try:
+            document = self._build_document(raw, topic=topic, subject=subject)
+        except NotesValidationError as exc:
+            # Verbosity alone is not worth failing the request: if everything
+            # else passed, keep the longer note and flag the overrun.
+            if exc.code == "NOTES_TOO_LONG":
+                structured = normalize_concise_payload(raw, topic=topic)
+                structured["topic"] = structured.get("topic") or topic
+                structured["subject"] = subject
+                markdown = render_concise_markdown(structured)
+                word_count = count_words(markdown)
+                trace.mark("validate", ok=True, attempt=2, repaired=True, over_limit=word_count)
+                logger.warning(
+                    "concise_notes still over the word limit after repair topic=%r word_count=%d — serving anyway",
+                    topic,
+                    word_count,
+                )
+                return _Document(structured, markdown, word_count), provider_meta, True
+
+            trace.mark("validate", ok=False, attempt=2, error=str(exc))
+            raise NotesSchemaError(
+                f"Notes for '{topic}' failed validation after one repair attempt",
+                details=[*errors, *(exc.details or [{"error": str(exc)}])],
+            ) from exc
+
+        trace.mark("validate", ok=True, attempt=2, repaired=True, word_count=document.word_count)
+        logger.info("concise_notes repaired topic=%r word_count=%d", topic, document.word_count)
+        return document, provider_meta, False
 
 
-async def generate_sectioned_notes_result(
+async def generate_concise_notes_result(
     *,
     topic: str,
-    subject: str | None,
-    exam_priority: str,
-    generate_section_json: GenerateSectionJsonFn,
-    concurrency: int = DEFAULT_SECTION_CONCURRENCY,
+    subject: str | None = None,
+    generate_notes_json: GenerateNotesJsonFn,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    pipeline = SectionedNotesPipeline(concurrency=concurrency)
-    return await pipeline.run(
+    return await ConciseNotesPipeline().run(
         topic=topic,
         subject=subject,
-        exam_priority=exam_priority,
-        generate_section_json=generate_section_json,
+        generate_notes_json=generate_notes_json,
     )
+
+
+__all__ = [
+    "ConciseNotesPipeline",
+    "GenerateNotesJsonFn",
+    "generate_concise_notes_result",
+]

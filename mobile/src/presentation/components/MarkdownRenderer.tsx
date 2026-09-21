@@ -12,8 +12,13 @@ type Block =
   | { type: 'h3'; text: string }
   | { type: 'h4'; text: string }
   | { type: 'bullet'; text: string }
+  | { type: 'numbered'; marker: string; text: string }
   | { type: 'code'; lines: string[] }
   | { type: 'paragraph'; text: string };
+
+// Study notes render "Working" as numbered steps; without this they would
+// fall through to plain paragraphs and lose their list alignment.
+const NUMBERED_ITEM = /^(\d{1,2})[.)]\s+(.*)$/;
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u200b-\u200d\ufeff]/g;
 const DIAGRAM_LINE = /^[\s|+_\-=*/\\<>^v.~`#─━│┌┐└┘├┤┬┴┼╔╗╚╝→←↑↓⇒⇐]+$/;
@@ -147,7 +152,12 @@ function parseMarkdown(content: string): Block[] {
     } else if (/^[-*•]\s+/.test(trimmed)) {
       blocks.push({ type: 'bullet', text: trimmed.replace(/^[-*•]\s+/, '') });
     } else {
-      blocks.push({ type: 'paragraph', text: trimmed });
+      const numbered = NUMBERED_ITEM.exec(trimmed);
+      if (numbered) {
+        blocks.push({ type: 'numbered', marker: `${numbered[1]}.`, text: numbered[2] });
+      } else {
+        blocks.push({ type: 'paragraph', text: trimmed });
+      }
     }
     i += 1;
   }
@@ -236,6 +246,13 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
                 <Text style={styles.bulletText}>{renderInline(block.text)}</Text>
               </View>
             );
+          case 'numbered':
+            return (
+              <View key={index} style={styles.bulletRow}>
+                <Text style={styles.stepMarker}>{block.marker}</Text>
+                <Text style={styles.bulletText}>{renderInline(block.text)}</Text>
+              </View>
+            );
           default:
             return (
               <Text key={index} style={styles.paragraph}>
@@ -300,6 +317,13 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.primary,
     width: 16,
+    lineHeight: 24,
+  },
+  stepMarker: {
+    ...typography.bodySmall,
+    color: colors.primary,
+    fontWeight: '700',
+    width: 24,
     lineHeight: 24,
   },
   bulletText: {

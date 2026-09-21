@@ -66,6 +66,7 @@ class BaseAIProvider(ABC):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         pass
 
@@ -123,7 +124,11 @@ class OpenAIProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        # response_schema is Gemini's OpenAPI-subset dialect; the OpenAI-compatible
+        # path relies on plain JSON mode plus the schema described in the prompt.
+        _ = response_schema
         client = self._client()
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -218,10 +223,14 @@ class GroqProvider(OpenAIProvider):
 class GeminiProvider(BaseAIProvider):
     """Gemini via REST API (supports AIza and AQ. auth keys)."""
 
+    # Tried in order after the configured model. The `-latest` aliases are
+    # listed last on purpose: they never 404 as Google retires point releases,
+    # which is exactly how the previous 2.0-flash fallbacks became dead weight.
     FALLBACK_MODELS = (
         "gemini-2.5-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-2.0-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest",
     )
 
     def __init__(self, api_key: str, model: str) -> None:
@@ -334,6 +343,7 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> str:
         url = f"{GEMINI_API_BASE}/models/{model_name}:generateContent"
         generation_config: dict[str, Any] = {
@@ -344,6 +354,8 @@ class GeminiProvider(BaseAIProvider):
             generation_config["topP"] = top_p
         if json_mode:
             generation_config["responseMimeType"] = "application/json"
+            if response_schema:
+                generation_config["responseSchema"] = response_schema
         if self._supports_thinking(model_name):
             generation_config["thinkingConfig"] = {"thinkingBudget": 0}
 
@@ -415,6 +427,7 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         last_exc: Exception | None = None
 
@@ -430,6 +443,7 @@ class GeminiProvider(BaseAIProvider):
                     max_output_tokens=max_output_tokens,
                     temperature=temperature,
                     top_p=top_p,
+                    response_schema=response_schema,
                 )
                 if content.strip():
                     logger.info("Gemini rest generation succeeded model=%s", model_name)
@@ -471,6 +485,7 @@ class GeminiProvider(BaseAIProvider):
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         content, model_name = await self._generate(
             system_prompt,
@@ -479,6 +494,7 @@ class GeminiProvider(BaseAIProvider):
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             top_p=top_p,
+            response_schema=response_schema,
         )
         parsed = self._parse_json_content(content)
         metadata = {
