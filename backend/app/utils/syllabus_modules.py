@@ -6,7 +6,7 @@ import hashlib
 import re
 from typing import Any
 
-from app.utils.subject_detector import normalize_subject_name
+from app.utils.subject_matcher import subject_key
 from app.utils.topic_priority import (
     _similarity,
     canonical_topic_key,
@@ -152,20 +152,12 @@ def extract_subject_modules_from_catalog(
     """
     Build ordered modules from a syllabus catalog (subject/unit/topic rows).
     """
-    pref = normalize_subject_name(preferred_subject or "").lower()
+    pref = subject_key(preferred_subject)
     rows = list(catalog or [])
     if pref:
-        preferred = [
-            r
-            for r in rows
-            if normalize_subject_name(str(r.get("subject") or "")).lower() == pref
-        ]
-        if not preferred:
-            preferred = [
-                r
-                for r in rows
-                if pref in normalize_subject_name(str(r.get("subject") or "")).lower()
-            ]
+        # Alias-aware, never fuzzy: a DBMS PYQ may only use the "Database
+        # Management System" rows, but must never borrow another subject's.
+        preferred = [r for r in rows if subject_key(str(r.get("subject") or "")) == pref]
         rows = preferred
 
     modules_map: dict[str, dict[str, Any]] = {}
@@ -225,31 +217,121 @@ def extract_subject_modules_from_catalog(
     return modules
 
 
+def modules_from_saved_syllabus(
+    saved_modules: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Expand a stored syllabus module list into the runtime module shape.
+
+    The `syllabi` collection stores modules compactly — module_number,
+    module_name and a list of topic names. PYQ mapping, filtering and the
+    mobile UI all consume the richer shape produced by the extraction
+    helpers below, so both paths converge here rather than growing a second
+    module pipeline.
+    """
+    modules: list[dict[str, Any]] = []
+    for idx, saved in enumerate(saved_modules or [], start=1):
+        if not isinstance(saved, dict):
+            continue
+        module_name = str(saved.get("module_name") or "").strip() or f"Module {idx}"
+        number = saved.get("module_number")
+        try:
+            number = int(number) if number is not None else None
+        except (TypeError, ValueError):
+            number = None
+        mid = str(saved.get("module_id") or "") or make_module_id(number, module_name)
+        display_name = str(saved.get("display_name") or "").strip() or (
+            f"Module {number} — {module_name}" if number is not None else module_name
+        )
+
+        topics: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for raw in saved.get("topics") or []:
+            name = str(raw.get("topic_name") or raw.get("topic") or "") if isinstance(raw, dict) else str(raw)
+            name = name.strip()
+            if not name:
+                continue
+            tkey = canonical_topic_key(name)
+            if tkey in seen:
+                continue
+            seen.add(tkey)
+            topics.append(
+                {
+                    "topic_id": make_topic_id(name),
+                    "topic_name": name,
+                    "topic": name,
+                    "unit": display_name,
+                    "module_id": mid,
+                    "module_number": number,
+                    "module_name": module_name,
+                    "from_syllabus": True,
+                }
+            )
+
+        modules.append(
+            {
+                "module_id": mid,
+                "module_number": number,
+                "module_name": module_name,
+                "display_name": display_name,
+                "topics": topics,
+            }
+        )
+    return modules
+
+
+def compact_modules_for_storage(
+    modules: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Reduce runtime modules to the persisted syllabus shape."""
+    compact: list[dict[str, Any]] = []
+    for mod in modules or []:
+        if mod.get("is_unmapped") or mod.get("is_fallback"):
+            continue
+        compact.append(
+            {
+                "module_id": mod.get("module_id"),
+                "module_number": mod.get("module_number"),
+                "module_name": mod.get("module_name"),
+                "display_name": mod.get("display_name"),
+                "topics": [
+                    str(t.get("topic_name") or t.get("topic") or "").strip()
+                    for t in (mod.get("topics") or [])
+                    if str(t.get("topic_name") or t.get("topic") or "").strip()
+                ],
+            }
+        )
+    return compact
+
+
 def extract_subject_modules_from_structure(
     structure: dict[str, Any] | None,
     *,
     preferred_subject: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Prefer rich subjects[].units when available; else fall back to catalog."""
+    """Prefer a saved syllabus, then rich subjects[].units, then the catalog."""
     if not structure:
         return []
 
-    pref = normalize_subject_name(preferred_subject or "").lower()
+    # A syllabus loaded from the `syllabi` collection already has its modules
+    # resolved for this subject — no need to re-parse the document catalog.
+    if structure.get("modules"):
+        saved = modules_from_saved_syllabus(structure.get("modules"))
+        if saved:
+            return saved
+
+    pref = subject_key(preferred_subject)
     subjects = list(structure.get("subjects") or [])
     chosen = None
     if pref:
+        # Only an exact or alias match counts, and a subject entry without
+        # units is useless — a combined syllabus often declares the short name
+        # ("DBMS") separately from the section that carries the modules.
         for s in subjects:
-            if normalize_subject_name(s.get("name") or "").lower() == pref:
+            if subject_key(s.get("name") or "") == pref and (s.get("units") or []):
                 chosen = s
                 break
     if chosen is None and len(subjects) == 1:
         chosen = subjects[0]
-    if chosen is None and subjects and pref:
-        # fuzzy subject name
-        for s in subjects:
-            if pref in normalize_subject_name(s.get("name") or "").lower():
-                chosen = s
-                break
 
     if chosen and (chosen.get("units") or []):
         modules: list[dict[str, Any]] = []
@@ -325,6 +407,7 @@ def build_module_topic_tree(
         syllabus_structure,
         preferred_subject=preferred_subject,
     )
+    has_syllabus_modules = bool(modules)
 
     # Flat syllabus topic index for matching.
     syllabus_topics: list[dict[str, Any]] = []
@@ -364,6 +447,25 @@ def build_module_topic_tree(
                 enriched.append(_apply_occurrence(t, None))
         mod["topics"] = enriched
 
+    # A PYQ topic often names a whole module ("Normalization") when the
+    # syllabus lists only that module's sub-topics. Matching module names is
+    # not inventing a module — the module comes from the syllabus.
+    module_name_index = [
+        (mod, canonical_topic_key(str(mod.get("module_name") or ""))) for mod in modules
+    ]
+
+    def _match_module_by_name(pyq_key: str) -> dict[str, Any] | None:
+        best_mod: dict[str, Any] | None = None
+        best_score = 0.0
+        for mod, mkey in module_name_index:
+            if not mkey:
+                continue
+            score = _similarity(pyq_key, mkey)
+            if score > best_score:
+                best_score = score
+                best_mod = mod
+        return best_mod if best_mod is not None and best_score >= _MATCH_THRESHOLD else None
+
     # Unmapped PYQ topics.
     unmapped: list[dict[str, Any]] = []
     for pyq_key, pyq_row in pyq_by_key.items():
@@ -375,6 +477,27 @@ def build_module_topic_tree(
         )
         if match and score >= _MATCH_THRESHOLD:
             # Late match into existing module topic (already enriched above via reverse).
+            continue
+        by_module_name = _match_module_by_name(pyq_key)
+        if by_module_name is not None:
+            topic_name = str(pyq_row.get("topic") or "")
+            by_module_name["topics"].append(
+                _apply_occurrence(
+                    {
+                        "topic_id": make_topic_id(topic_name),
+                        "topic_name": topic_name,
+                        "topic": topic_name,
+                        "unit": by_module_name.get("display_name")
+                        or by_module_name.get("module_name"),
+                        "module_id": by_module_name.get("module_id"),
+                        "module_number": by_module_name.get("module_number"),
+                        "module_name": by_module_name.get("module_name"),
+                        "from_syllabus": False,
+                        "matched_by": "module_name",
+                    },
+                    pyq_row,
+                )
+            )
             continue
         item = {
             "topic_id": make_topic_id(str(pyq_row.get("topic") or pyq_key)),
@@ -465,7 +588,33 @@ def build_module_topic_tree(
         )
     )
 
-    if unmapped:
+    if not has_syllabus_modules:
+        # No syllabus for this subject: PYQ topics are still fully usable, they
+        # just are not module-grouped. Calling them "unmapped" would imply a
+        # syllabus exists that they failed to match.
+        for topic in unmapped:
+            topic["unit"] = "General Topics"
+            topic["module_id"] = "m_general"
+            topic["module_number"] = 1
+            topic["module_name"] = "General Topics"
+            topic.pop("needs_review", None)
+            topic.pop("match_confidence", None)
+        modules = [
+            {
+                "module_id": "m_general",
+                "module_number": 1,
+                "module_name": "General Topics",
+                "display_name": "General Topics",
+                "is_fallback": True,
+                "topics": unmapped,
+                "topic_count": len(unmapped),
+                "asked_topic_count": sum(1 for t in unmapped if t.get("asked")),
+                "high_priority_count": sum(1 for t in unmapped if t.get("priority") == "High"),
+                "question_occurrence": sum(int(t.get("occurrence_count") or 0) for t in unmapped),
+            }
+        ]
+        needs_review = []
+    elif unmapped:
         modules.append(
             {
                 "module_id": "m_unmapped",
@@ -480,47 +629,6 @@ def build_module_topic_tree(
                 "question_occurrence": sum(int(t.get("occurrence_count") or 0) for t in unmapped),
             }
         )
-
-    # No syllabus modules at all → put everything under General Topics.
-    if not modules:
-        general_topics = []
-        for pyq_row in pyq_topics or []:
-            item = {
-                "topic_id": make_topic_id(str(pyq_row.get("topic") or "")),
-                "topic_name": pyq_row.get("topic"),
-                "topic": pyq_row.get("topic"),
-                "unit": "General Topics",
-                "module_id": "m_general",
-                "module_number": 1,
-                "module_name": "General Topics",
-                "from_syllabus": False,
-            }
-            general_topics.append(_apply_occurrence(item, pyq_row))
-        general_topics = [_reprioritize(t) for t in general_topics]
-        general_topics.sort(
-            key=lambda t: (
-                {"High": 0, "Medium": 1, "Low": 2}.get(str(t.get("priority") or "Low"), 9),
-                -int(t.get("occurrence_count") or 0),
-            )
-        )
-        modules = [
-            {
-                "module_id": "m_general",
-                "module_number": 1,
-                "module_name": "General Topics",
-                "display_name": "General Topics",
-                "is_fallback": True,
-                "topics": general_topics,
-                "topic_count": len(general_topics),
-                "asked_topic_count": sum(1 for t in general_topics if t.get("asked")),
-                "high_priority_count": sum(
-                    1 for t in general_topics if t.get("priority") == "High"
-                ),
-                "question_occurrence": sum(
-                    int(t.get("occurrence_count") or 0) for t in general_topics
-                ),
-            }
-        ]
 
     flat_topics: list[dict[str, Any]] = []
     for mod in modules:

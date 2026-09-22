@@ -26,11 +26,13 @@ class DocumentService:
         stats_repo: StatsRepository,
         file_service: FileService | None = None,
         subject_service: SubjectService | None = None,
+        syllabus_service: Any | None = None,
     ) -> None:
         self.document_repo = document_repo
         self.stats_repo = stats_repo
         self.file_service = file_service or FileService()
         self.subject_service = subject_service
+        self.syllabus_service = syllabus_service
 
     async def upload_document(
         self,

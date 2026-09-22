@@ -15,6 +15,7 @@ from app.repositories.quiz_repository import (
 )
 from app.repositories.stats_repository import StatsRepository
 from app.repositories.subject_repository import SubjectRepository
+from app.repositories.syllabus_repository import SyllabusRepository
 from app.repositories.user_repository import UserRepository
 from app.services.ai.ai_service import AIService
 from app.services.analysis_service import AnalysisService
@@ -25,6 +26,7 @@ from app.services.notes_service import NotesService
 from app.services.profile_service import ProfileService
 from app.services.quiz_service import QuizService
 from app.services.subject_service import SubjectService
+from app.services.syllabus_service import SyllabusService
 
 
 def get_user_repo(db: Annotated[AsyncIOMotorDatabase, Depends(get_db)]) -> UserRepository:
@@ -79,13 +81,32 @@ def get_generated_notes_repo(
     return GeneratedNotesRepository(db)
 
 
+def get_syllabus_repo(
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_db)],
+) -> SyllabusRepository:
+    return SyllabusRepository(db)
+
+
+def get_syllabus_service(
+    syllabus_repo: Annotated[SyllabusRepository, Depends(get_syllabus_repo)],
+) -> SyllabusService:
+    return SyllabusService(syllabus_repo)
+
+
 def get_subject_service(
     subject_repo: Annotated[SubjectRepository, Depends(get_subject_repo)],
     document_repo: Annotated[DocumentRepository, Depends(get_document_repo)],
     analysis_repo: Annotated[AnalysisRepository, Depends(get_analysis_repo)],
     generated_notes_repo: Annotated[GeneratedNotesRepository, Depends(get_generated_notes_repo)],
+    syllabus_service: Annotated[SyllabusService, Depends(get_syllabus_service)],
 ) -> SubjectService:
-    return SubjectService(subject_repo, document_repo, analysis_repo, generated_notes_repo)
+    return SubjectService(
+        subject_repo,
+        document_repo,
+        analysis_repo,
+        generated_notes_repo,
+        syllabus_service,
+    )
 
 
 def get_document_service(
@@ -93,8 +114,15 @@ def get_document_service(
     stats_repo: Annotated[StatsRepository, Depends(get_stats_repo)],
     file_service: Annotated[FileService, Depends(get_file_service)],
     subject_service: Annotated[SubjectService, Depends(get_subject_service)],
+    syllabus_service: Annotated[SyllabusService, Depends(get_syllabus_service)],
 ) -> DocumentService:
-    return DocumentService(document_repo, stats_repo, file_service, subject_service)
+    return DocumentService(
+        document_repo,
+        stats_repo,
+        file_service,
+        subject_service,
+        syllabus_service,
+    )
 
 
 def get_analysis_service(

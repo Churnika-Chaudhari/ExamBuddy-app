@@ -19,11 +19,13 @@ class SubjectService:
         document_repo: DocumentRepository,
         analysis_repo: AnalysisRepository,
         generated_notes_repo: GeneratedNotesRepository | None = None,
+        syllabus_service: Any | None = None,
     ) -> None:
         self.subject_repo = subject_repo
         self.document_repo = document_repo
         self.analysis_repo = analysis_repo
         self.generated_notes_repo = generated_notes_repo
+        self.syllabus_service = syllabus_service
 
     def _map_subject(self, doc: dict[str, Any]) -> dict[str, Any]:
         mapped = map_document_response(doc)

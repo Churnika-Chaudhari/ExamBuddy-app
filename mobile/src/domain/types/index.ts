@@ -276,6 +276,33 @@ export interface SubjectModule {
   pyq_topics?: SubjectTopic[];
 }
 
+export interface SavedSyllabusModule {
+  module_id: string;
+  module_number?: number | null;
+  module_name: string;
+  display_name?: string | null;
+  topics: string[];
+  topic_count: number;
+}
+
+/** A syllabus persisted on the backend for the signed-in user. */
+export interface SavedSyllabus {
+  id: string;
+  subject: string;
+  subject_key?: string;
+  modules: SavedSyllabusModule[];
+  module_count: number;
+  topic_count: number;
+  file_reference?: {
+    document_id?: string | null;
+    file_name?: string | null;
+    file_url?: string | null;
+  } | null;
+  status?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface SubjectSourceDocument {
   id: string;
   title: string;
@@ -310,6 +337,11 @@ export interface SubjectPyqFilter {
   selected_module_ids: string[];
   empty_modules: string[];
   all_modules: boolean;
+  module_count?: number;
+  has_syllabus_modules?: boolean;
+  /** 'saved_syllabus' | 'syllabus_document' | 'none' */
+  syllabus_source?: string | null;
+  syllabus_message?: string | null;
   analysis_ids: string[];
   analyzed_paper_count?: number;
 }

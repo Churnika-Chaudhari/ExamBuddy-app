@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from app.utils.subject_detector import normalize_subject_name
+from app.utils.subject_matcher import subject_key
 from app.utils.topic_extractor import _clean_topic_phrase, _title_case_topic, filter_topics, is_valid_topic
 
 _SUBJECT_HEADER = re.compile(
@@ -94,8 +95,13 @@ def extract_syllabus_structure(
     def _ensure_subject(name: str) -> dict[str, Any]:
         nonlocal current_subject, current_unit, awaiting_module_title
         key = normalize_subject_name(name) or fallback_subject
+        # "DBMS" (from the upload form) and "Database Management System" (from
+        # the document header) are one subject, not two.
+        match_key = subject_key(key)
         for existing in subjects:
-            if existing["name"].lower() == key.lower():
+            if existing["name"].lower() == key.lower() or (
+                match_key and subject_key(existing["name"]) == match_key
+            ):
                 current_subject = existing
                 current_unit = None
                 awaiting_module_title = False
@@ -421,7 +427,7 @@ def collect_syllabus_catalog(
     subjects: list[dict[str, Any]] = []
     seen_topics: set[str] = set()
     seen_subjects: set[str] = set()
-    pref = normalize_subject_name(preferred_subject or "").lower()
+    pref = subject_key(preferred_subject)
 
     for doc in syllabus_docs:
         structure = doc.get("syllabus_structure") or {}
@@ -432,7 +438,7 @@ def collect_syllabus_catalog(
             )
         for subject in structure.get("subjects") or []:
             name = normalize_subject_name(subject.get("name") or "")
-            if pref and name.lower() != pref:
+            if pref and subject_key(name) != pref:
                 continue
             if name and name.lower() not in seen_subjects:
                 seen_subjects.add(name.lower())
@@ -441,8 +447,8 @@ def collect_syllabus_catalog(
             topic = str(row.get("topic") or "").strip()
             if not topic:
                 continue
-            row_subject = normalize_subject_name(str(row.get("subject") or ""))
-            if pref and row_subject and row_subject.lower() != pref:
+            row_subject = subject_key(str(row.get("subject") or ""))
+            if pref and row_subject and row_subject != pref:
                 continue
             key = f"{row.get('subject','')}|{topic}".lower()
             if key in seen_topics:

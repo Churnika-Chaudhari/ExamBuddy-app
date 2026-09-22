@@ -14,6 +14,7 @@ import type {
   QuizGenerateParams,
   QuizSubject,
   QuizSubmitResult,
+  SavedSyllabus,
   SubjectOverview,
   SubjectPyqFilter,
   SubjectTopic,
@@ -266,6 +267,18 @@ export const subjectsApi = {
 
   delete: (subjectId: string) =>
     apiClient.delete<ApiResponse<{ message: string }>>(`/subjects/${subjectId}`),
+};
+
+export const syllabusApi = {
+  /** Syllabi saved for the signed-in user — fetched on Home init. */
+  list: () =>
+    apiClient.get<ApiResponse<{ syllabi: SavedSyllabus[]; count: number }>>('/syllabus'),
+
+  getForSubject: (subject: string) =>
+    apiClient.get<ApiResponse<SavedSyllabus>>(`/syllabus/${encodeURIComponent(subject)}`),
+
+  delete: (syllabusId: string) =>
+    apiClient.delete<ApiResponse<{ message: string }>>(`/syllabus/id/${syllabusId}`),
 };
 
 export const quizApi = {

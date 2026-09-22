@@ -40,6 +40,17 @@ async def create_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.subjects.create_index([("user_id", 1), ("name", 1)], unique=True)
     await db.subjects.create_index([("user_id", 1), ("last_updated", -1)])
 
+    # One saved syllabus per user + subject (alias-normalized key).
+    try:
+        await db.syllabi.create_index(
+            [("user_id", 1), ("subject_key", 1)],
+            unique=True,
+            name="user_subject_key_unique",
+        )
+    except Exception as exc:
+        logger.warning("Could not create unique syllabi index: %s", exc)
+    await db.syllabi.create_index([("user_id", 1), ("updated_at", -1)])
+
     await db.quizzes.create_index([("user_id", 1), ("created_at", -1)])
     await db.quizzes.create_index([("user_id", 1), ("subject", 1)])
     await db.quiz_attempts.create_index([("user_id", 1), ("completed_at", -1)])
