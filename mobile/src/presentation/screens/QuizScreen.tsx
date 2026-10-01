@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { Text, ActivityIndicator, Chip, SegmentedButtons } from 'react-native-paper';
+import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { Text, ActivityIndicator, Chip, RadioButton, SegmentedButtons } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -54,18 +54,33 @@ export default function QuizScreen() {
   const [difficulty, setDifficulty] = useState<QuizDifficulty>('medium');
   const [numQuestions, setNumQuestions] = useState(10);
   const [generatingLabel, setGeneratingLabel] = useState<string | null>(null);
+  const [subjectsError, setSubjectsError] = useState<string | null>(null);
+
+  const loadSubjects = useCallback(async () => {
+    setSubjectsError(null);
+    try {
+      await fetchSubjects();
+    } catch (err) {
+      setSubjectsError(getErrorMessage(err));
+    }
+  }, [fetchSubjects]);
 
   useFocusEffect(
     useCallback(() => {
       fetchQuizzes();
-      fetchSubjects().catch((err) => {
-        showSnackbar(getErrorMessage(err), 'error');
-      });
-    }, [fetchQuizzes, fetchSubjects, showSnackbar])
+      loadSubjects();
+    }, [fetchQuizzes, loadSubjects])
   );
 
+  const handleSelectSubject = (subject: QuizSubject) => {
+    setSelectedSubject((prev) => (prev?.id === subject.id ? prev : subject));
+  };
+
   const handleGenerate = async () => {
-    if (!selectedSubject?.name) return;
+    if (!selectedSubject?.name) {
+      showSnackbar('Please select a subject first.', 'error');
+      return;
+    }
     try {
       setGeneratingLabel(`Generating ${selectedSubject.name} quiz…`);
       const { topics, subject, analysisIds } = await fetchSubjectTopics(selectedSubject.id);
@@ -195,33 +210,77 @@ export default function QuizScreen() {
 
       <AppCard style={styles.configCard}>
         <Text style={styles.fieldLabel}>Select Subject</Text>
-        {subjects.length === 0 ? (
-          <Text style={styles.noSubjects}>No subjects yet — upload & analyze PYQs or generate notes first</Text>
+        {isLoading && subjects.length === 0 ? (
+          <View style={styles.subjectsLoading}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={styles.subjectsLoadingText}>Loading subjects...</Text>
+          </View>
+        ) : subjectsError ? (
+          <View style={styles.subjectsErrorBox}>
+            <Ionicons name="alert-circle-outline" size={20} color={colors.error} />
+            <Text style={styles.subjectsErrorText}>Unable to load subjects.</Text>
+            <AppButton
+              label="Retry"
+              mode="outlined"
+              onPress={loadSubjects}
+              style={styles.retryBtn}
+            />
+          </View>
+        ) : subjects.length === 0 ? (
+          <View style={styles.subjectsEmptyBox}>
+            <Ionicons name="school-outline" size={28} color={colors.textMuted} />
+            <Text style={styles.subjectsEmptyTitle}>No subjects available yet.</Text>
+            <Text style={styles.subjectsEmptyText}>
+              Upload and analyze a PYQ to generate a quiz.
+            </Text>
+            <AppButton
+              label="Upload PYQ"
+              mode="outlined"
+              icon="cloud-upload-outline"
+              onPress={() => navigation.navigate('UploadPYQ', { initialCategory: 'pyq' })}
+              style={styles.retryBtn}
+            />
+          </View>
         ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.subjectRow}
-          >
+          <View style={styles.subjectList}>
             {subjects.map((s) => {
               const active = selectedSubject?.id === s.id;
               return (
-                <View key={s.id} style={styles.subjectChipWrap}>
-                  <Chip
-                    selected={active}
-                    onPress={() => setSelectedSubject(s)}
-                    style={[styles.subjectChip, active && styles.subjectChipActive]}
-                    textStyle={active ? styles.subjectChipTextActive : styles.subjectChipText}
+                <Pressable
+                  key={s.id}
+                  onPress={() => handleSelectSubject(s)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={`${s.name}, ${s.pyq_count} analyzed PYQs, ${s.topic_count} topics`}
+                  style={[styles.subjectRowCard, active && styles.subjectRowCardActive]}
+                >
+                  <RadioButton
+                    value={s.id}
+                    status={active ? 'checked' : 'unchecked'}
+                    onPress={() => handleSelectSubject(s)}
+                    color={colors.primary}
+                  />
+                  <View style={styles.subjectRowInfo}>
+                    <Text style={[styles.subjectRowName, active && styles.subjectRowNameActive]}>
+                      {s.name}
+                    </Text>
+                    <Text style={styles.subjectRowMeta}>
+                      {s.pyq_count} analyzed PYQ{s.pyq_count === 1 ? '' : 's'} · {s.topic_count}{' '}
+                      topic{s.topic_count === 1 ? '' : 's'}
+                    </Text>
+                  </View>
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() => confirmDeleteSubject(s)}
+                    accessibilityLabel={`Remove ${s.name}`}
+                    style={styles.subjectRowDelete}
                   >
-                    {s.name}
-                  </Chip>
-                  <Pressable hitSlop={8} onPress={() => confirmDeleteSubject(s)} style={styles.chipDelete}>
-                    <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                    <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
                   </Pressable>
-                </View>
+                </Pressable>
               );
             })}
-          </ScrollView>
+          </View>
         )}
 
         {selectedSubject ? (
@@ -234,8 +293,8 @@ export default function QuizScreen() {
               </Text>
             </View>
           </View>
-        ) : subjects.length > 0 ? (
-          <Text style={styles.pickHint}>Tap a subject above to start</Text>
+        ) : subjects.length > 0 && !isLoading && !subjectsError ? (
+          <Text style={styles.pickHint}>Select a subject above to start</Text>
         ) : null}
 
         <Text style={styles.fieldLabel}>Difficulty</Text>
@@ -378,31 +437,80 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginBottom: spacing.sm,
   },
-  subjectRow: {
+  subjectList: {
     gap: spacing.sm,
-    paddingRight: spacing.md,
-    paddingBottom: spacing.xs,
+    marginBottom: spacing.sm,
   },
-  subjectChipWrap: {
+  subjectRowCard: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  subjectChip: {
     backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingVertical: spacing.xs,
+    paddingRight: spacing.sm,
   },
-  subjectChipActive: {
+  subjectRowCardActive: {
+    borderColor: colors.primary,
     backgroundColor: colors.primaryLight,
   },
-  subjectChipText: {
+  subjectRowInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  subjectRowName: {
+    ...typography.label,
     color: colors.text,
   },
-  subjectChipTextActive: {
+  subjectRowNameActive: {
     color: colors.primary,
     fontWeight: '700',
   },
-  chipDelete: {
-    marginLeft: -6,
-    marginRight: spacing.xs,
+  subjectRowMeta: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  subjectRowDelete: {
+    padding: spacing.xs,
+    marginLeft: spacing.xs,
+  },
+  subjectsLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+  },
+  subjectsLoadingText: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+  },
+  subjectsErrorBox: {
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  subjectsErrorText: {
+    ...typography.bodySmall,
+    color: colors.error,
+  },
+  subjectsEmptyBox: {
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
+  subjectsEmptyTitle: {
+    ...typography.label,
+    color: colors.text,
+  },
+  subjectsEmptyText: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  retryBtn: {
+    alignSelf: 'flex-start',
   },
   selectedSubjectBox: {
     flexDirection: 'row',
