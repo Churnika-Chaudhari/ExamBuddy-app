@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from app.services.ai.base_provider import chunk_text
 from app.services.pipeline.text_preprocessor import preprocess_pyq_text
+from app.utils.perf import perf_mark
 from app.utils.text_extractor import extract_text
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,11 @@ def extract_and_chunk_sync(file_bytes: bytes, file_type: str) -> dict[str, Any]:
     """
     Synchronous extract + preprocess + chunk (runs in thread pool).
     Called once per document upload — never re-reads the PDF file afterward.
+
+    Returns the cleaned text, cached chunks, AND the cleaned question lines so
+    analysis can reuse them instead of re-running the cleaning pipeline.
     """
+    started = time.perf_counter()
     result = extract_text(file_bytes, file_type)
     raw_text = result.get("text") or ""
     if not raw_text.strip():
@@ -44,6 +50,7 @@ def extract_and_chunk_sync(file_bytes: bytes, file_type: str) -> dict[str, Any]:
             "text": "",
             "page_count": result.get("page_count", 0),
             "chunks": [],
+            "question_lines": [],
         }
 
     preprocessed = preprocess_pyq_text(raw_text)
@@ -51,15 +58,24 @@ def extract_and_chunk_sync(file_bytes: bytes, file_type: str) -> dict[str, Any]:
     chunks = build_text_chunks(cleaned_text)
 
     logger.info(
-        "PDF processed: pages=%s chars=%d chunks=%d",
+        "PDF processed: pages=%s chars=%d chunks=%d questions=%d",
         result.get("page_count"),
         len(cleaned_text),
         len(chunks),
+        len(preprocessed.question_lines),
+    )
+    perf_mark(
+        "document_process_total",
+        started,
+        pages=result.get("page_count"),
+        chars=len(cleaned_text),
+        chunks=len(chunks),
     )
     return {
         "text": cleaned_text,
         "page_count": result.get("page_count", 0),
         "chunks": chunks,
+        "question_lines": preprocessed.question_lines,
     }
 
 

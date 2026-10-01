@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +16,7 @@ from app.services.mappers import map_document_response
 from app.services.subject_service import SubjectService
 from app.services.pipeline.notes_pipeline import NotesPipeline
 from app.services.quiz_service import _topics_from_analysis_doc
+from app.utils.perf import perf_mark
 from app.utils.subject_detector import resolve_document_subject
 
 logger = logging.getLogger(__name__)
@@ -139,6 +141,7 @@ class AnalysisService:
         documents: list[dict[str, Any]],
         analysis_subject: str | None = None,
     ) -> None:
+        started = time.perf_counter()
         try:
             combined_text = "\n\n---\n\n".join(
                 doc.get("extracted_text", "")
@@ -160,19 +163,47 @@ class AnalysisService:
                     if subject:
                         break
 
-            pipeline_result = await self.notes_pipeline.run_async(
-                combined_text,
-                subject=subject,
-                num_documents=len(documents),
+            cached_lines, cleaned_parts, reused, fallback = _collect_cached_question_lines(
+                documents
             )
+            if cached_lines and fallback == 0:
+                logger.info(
+                    "Analysis reusing stored question lines reused_docs=%d lines=%d",
+                    reused,
+                    len(cached_lines),
+                )
+                pipeline_result = await self.notes_pipeline.run_from_cached_async(
+                    "\n\n---\n\n".join(cleaned_parts) or combined_text,
+                    cached_lines,
+                    subject=subject,
+                    num_documents=len(documents),
+                )
+            else:
+                if fallback:
+                    logger.info(
+                        "Analysis falling back to preprocess for %d older document(s)",
+                        fallback,
+                    )
+                pipeline_result = await self.notes_pipeline.run_async(
+                    combined_text,
+                    subject=subject,
+                    num_documents=len(documents),
+                )
             cleaned_text = pipeline_result.cleaned_text
             local_analysis = pipeline_result.topic_analysis
 
+            ai_started = time.perf_counter()
             result, metadata = await self.ai_service.analyze_pyq(
                 cleaned_text,
                 subject,
                 num_documents=len(documents),
                 local_topics=local_analysis,
+            )
+            perf_mark(
+                "ai_analysis",
+                ai_started,
+                llm_skipped=bool((metadata or {}).get("llm_skipped")),
+                provider=(metadata or {}).get("provider"),
             )
             result = self.notes_pipeline.merge_ai_analysis(local_analysis, result)
 
@@ -203,6 +234,8 @@ class AnalysisService:
                 "lines_removed": pipeline_result.preprocess_stats.lines_removed,
                 "questions_parsed": len(pipeline_result.question_lines),
                 "topics_extracted": len(result.get("topic_table") or []),
+                "question_lines_reused": reused,
+                "question_lines_fallback": fallback,
             }
 
             update_payload: dict[str, Any] = {
@@ -230,7 +263,9 @@ class AnalysisService:
             }
             if subject:
                 update_payload["subject"] = subject
+            mongo_started = time.perf_counter()
             await self.analysis_repo.update(analysis_id, update_payload)
+            perf_mark("mongo_analysis_update", mongo_started)
             await self.stats_repo.add_activity(
                 user_id,
                 {
@@ -251,6 +286,7 @@ class AnalysisService:
             if self.subject_service and subject:
                 topic_count = len(_topics_from_analysis_doc(result))
                 await self.subject_service.on_analysis_completed(user_id, subject, topic_count)
+            perf_mark("analysis_total", started, analysis_id=analysis_id, documents=len(documents))
         except Exception as exc:
             logger.error("Analysis failed for %s: %s", analysis_id, exc)
             await self.analysis_repo.update(
@@ -292,3 +328,25 @@ class AnalysisService:
         mapped = map_document_response(analysis)
         mapped["document_ids"] = [str(doc_id) for doc_id in analysis.get("document_ids", [])]
         return mapped
+
+
+def _collect_cached_question_lines(
+    documents: list[dict[str, Any]],
+) -> tuple[list[str], list[str], int, int]:
+    """Reuse per-document question_lines stored at upload. Fall back per old doc."""
+    lines: list[str] = []
+    cleaned_parts: list[str] = []
+    reused = 0
+    fallback = 0
+    for doc in documents:
+        text = (doc.get("extracted_text") or "").strip()
+        if not text:
+            continue
+        stored = doc.get("question_lines")
+        if isinstance(stored, list) and any(str(item).strip() for item in stored):
+            lines.extend(str(item).strip() for item in stored if str(item).strip())
+            cleaned_parts.append(text)
+            reused += 1
+            continue
+        fallback += 1
+    return lines, cleaned_parts, reused, fallback

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import axios from 'axios';
 
 import { authApi } from '@/data/api/endpoints';
 import { getErrorMessage, tokenStorage } from '@/data/api/client';
@@ -47,10 +48,19 @@ export const useAuthStore = create<AuthState>((set) => ({
           startupMark(`API /auth/me done in ${Date.now() - meStarted}ms (background)`);
           set({ user: data.data, isAuthenticated: true });
         })
-        .catch(async () => {
-          startupMark(`API /auth/me failed in ${Date.now() - meStarted}ms (background)`);
-          await tokenStorage.clear();
-          set({ user: null, isAuthenticated: false });
+        .catch(async (error) => {
+          const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+          startupMark(
+            `API /auth/me failed in ${Date.now() - meStarted}ms status=${status ?? 'network'} (background)`
+          );
+          // Only a confirmed unauthorized response means the session is invalid.
+          // Timeouts, cold starts, and 5xx must not log the user out.
+          if (status === 401) {
+            await tokenStorage.clear();
+            set({ user: null, isAuthenticated: false });
+            return;
+          }
+          set({ isAuthenticated: true });
         });
     } catch {
       startupMark('TOKEN LOADED');

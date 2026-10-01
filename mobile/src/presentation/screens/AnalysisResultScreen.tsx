@@ -72,17 +72,34 @@ export default function AnalysisResultScreen() {
   const [filtered, setFiltered] = useState<SubjectPyqFilter | null>(null);
   const [filterError, setFilterError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     const load = async () => {
-      const analysis = await fetchAnalysis(analysisId);
-      if (analysis.status === 'processing' || analysis.status === 'pending') {
-        await pollAnalysis(analysisId);
+      setPollError(null);
+      try {
+        const analysis = await fetchAnalysis(analysisId);
+        if (cancelled) return;
+        if (analysis.status === 'processing' || analysis.status === 'pending') {
+          await pollAnalysis(analysisId);
+        }
+        if (!cancelled) {
+          await fetchCachedTopics(analysisId);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        const message = getErrorMessage(err);
+        setPollError(message);
+        showSnackbar(message, 'error');
       }
-      await fetchCachedTopics(analysisId);
     };
-    load();
-  }, [analysisId, fetchAnalysis, pollAnalysis, fetchCachedTopics]);
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisId, fetchAnalysis, pollAnalysis, fetchCachedTopics, retryToken, showSnackbar]);
 
   const analysis = currentAnalysis;
   const isProcessing = analysis?.status === 'processing' || analysis?.status === 'pending';
@@ -156,6 +173,18 @@ export default function AnalysisResultScreen() {
     }
   };
 
+  if (pollError) {
+    return (
+      <View style={styles.centered}>
+        <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+        <Text style={styles.errorText}>{pollError}</Text>
+        <View style={styles.retryWrap}>
+          <AppButton label="Retry" onPress={() => setRetryToken((n) => n + 1)} />
+        </View>
+      </View>
+    );
+  }
+
   if (isLoading && !analysis) {
     return (
       <View style={styles.centered}>
@@ -179,6 +208,9 @@ export default function AnalysisResultScreen() {
       <View style={styles.centered}>
         <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
         <Text style={styles.errorText}>{analysis?.error_message ?? 'Analysis failed'}</Text>
+        <View style={styles.retryWrap}>
+          <AppButton label="Retry" onPress={() => setRetryToken((n) => n + 1)} />
+        </View>
       </View>
     );
   }
@@ -302,6 +334,10 @@ const styles = StyleSheet.create({
     color: colors.error,
     marginTop: spacing.md,
     textAlign: 'center',
+  },
+  retryWrap: {
+    marginTop: spacing.lg,
+    minWidth: 160,
   },
   heading: {
     ...typography.h2,

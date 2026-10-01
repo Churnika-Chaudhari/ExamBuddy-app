@@ -70,7 +70,7 @@ function activityIcon(type: string): keyof typeof Ionicons.glyphMap {
 export default function DashboardScreen() {
   const navigation = useNavigation<Nav>();
   const user = useAuthStore((s) => s.user);
-  const { data, isLoading, fetchDashboard, clearActivities, deleteActivity } = useDashboardStore();
+  const { data, isLoading, isStale, error, fetchDashboard, clearActivities, deleteActivity } = useDashboardStore();
   const showSnackbar = useUIStore((s) => s.showSnackbar);
   const [clearing, setClearing] = useState(false);
 
@@ -133,6 +133,11 @@ export default function DashboardScreen() {
           Hello, {user?.full_name?.split(' ')[0] ?? 'Student'}
         </Text>
         <Text style={styles.subtitle}>Ready to ace your exams?</Text>
+        {isStale && isLoading ? (
+          <Text style={styles.refreshHint}>Updating…</Text>
+        ) : isStale && error ? (
+          <Text style={styles.refreshHint}>Couldn&apos;t refresh. Pull down to retry.</Text>
+        ) : null}
       </View>
 
       {isLoading && !data ? (
@@ -251,6 +256,11 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.textSecondary,
     marginTop: 4,
+  },
+  refreshHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 6,
   },
   loader: {
     marginTop: spacing.xl,

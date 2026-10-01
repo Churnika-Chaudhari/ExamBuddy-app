@@ -99,6 +99,40 @@ class NotesPipeline:
             preprocessed=preprocessed,
         )
 
+    async def run_from_cached_async(
+        self,
+        cleaned_text: str,
+        question_lines: list[str],
+        *,
+        subject: str | None = None,
+        num_documents: int = 1,
+    ) -> PipelineResult:
+        """Skip preprocess — reuse cleaned text + question lines stored at upload."""
+        from app.services.pipeline.text_preprocessor import PreprocessStats
+
+        stats = PreprocessStats(
+            original_chars=len(cleaned_text or ""),
+            cleaned_chars=len(cleaned_text or ""),
+            lines_removed=0,
+            lines_deduplicated=0,
+        )
+
+        def _run() -> PipelineResult:
+            topic_analysis = self.extract_topics(
+                cleaned_text,
+                question_lines,
+                subject=subject,
+                num_documents=num_documents,
+            )
+            return PipelineResult(
+                cleaned_text=cleaned_text,
+                question_lines=question_lines,
+                topic_analysis=topic_analysis,
+                preprocess_stats=stats,
+            )
+
+        return await asyncio.to_thread(_run)
+
     def merge_ai_analysis(
         self,
         local: dict[str, Any],

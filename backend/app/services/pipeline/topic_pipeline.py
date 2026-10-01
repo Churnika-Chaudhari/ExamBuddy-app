@@ -5,11 +5,13 @@ Academic topic extraction, canonical merging, and duplicate removal.
 from __future__ import annotations
 
 import re
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
 
+from app.utils.perf import perf_mark
 from app.utils.syllabus_concept_extractor import extract_concepts_from_questions
 from app.utils.syllabus_units import assign_syllabus_unit
 from app.utils.topic_extractor import _title_case_topic, is_valid_topic
@@ -252,10 +254,14 @@ def extract_and_merge_topics(
     *,
     num_documents: int = 1,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     raw_counter = extract_topics_from_questions(question_lines)
     if not raw_counter:
         return {}
+    extract_done = time.perf_counter()
+    perf_mark("topic_extraction", started, questions=len(question_lines), raw_topics=len(raw_counter))
     merged = merge_similar_topics(dict(raw_counter))
+    perf_mark("topic_merge", extract_done, merged_topics=len(merged))
     records = build_topic_records(merged)
     return topics_to_analysis_payload(
         records,

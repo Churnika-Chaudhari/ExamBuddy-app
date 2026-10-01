@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,6 +14,7 @@ from app.services.file_service import FileService
 from app.services.mappers import map_document_response
 from app.services.subject_service import SubjectService
 from app.services.pdf_processor import extract_and_chunk_async
+from app.utils.perf import perf_mark
 from app.utils.subject_detector import resolve_document_subject
 
 logger = logging.getLogger(__name__)
@@ -177,6 +179,7 @@ class DocumentService:
             update_fields: dict[str, Any] = {
                 "extracted_text": processed["text"],
                 "text_chunks": processed["chunks"],
+                "question_lines": processed.get("question_lines") or [],
                 "page_count": processed["page_count"],
                 "status": ProcessingStatus.READY,
                 "error_message": None,
@@ -245,7 +248,9 @@ class DocumentService:
                     if self.subject_service:
                         await self.subject_service.on_pyq_uploaded(user_id, inferred)
 
+            mongo_started = time.perf_counter()
             await self.document_repo.update(document_id, user_id, update_fields)
+            perf_mark("mongo_document_update", mongo_started, document_id=document_id)
         except Exception as exc:
             logger.error("Text extraction failed for document %s: %s", document_id, exc)
             await self.document_repo.update(

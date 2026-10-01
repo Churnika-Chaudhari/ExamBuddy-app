@@ -142,7 +142,14 @@ apiClient.interceptors.response.use(
         return apiClient(original);
       } catch (refreshError) {
         processQueue(null);
-        await tokenStorage.clear();
+        const refreshStatus = axios.isAxiosError(refreshError)
+          ? refreshError.response?.status
+          : undefined;
+        // Only drop the local session when the refresh token is confirmed invalid.
+        // Network / timeout / 5xx must not log the user out.
+        if (refreshStatus === 401) {
+          await tokenStorage.clear();
+        }
         throw refreshError;
       } finally {
         isRefreshing = false;

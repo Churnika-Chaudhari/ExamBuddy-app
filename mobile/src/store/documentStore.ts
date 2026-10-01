@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { documentsApi } from '@/data/api/endpoints';
 import { getErrorMessage } from '@/data/api/client';
 import type { Document } from '@/domain/types';
+import { nowMs, startupDuration } from '@/utils/startupPerf';
 
 export interface PickedFile {
   uri: string;
@@ -73,7 +74,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (files.length > 1) {
         try {
           set({ uploadProgress: `Uploading ${files.length} files in batch...` });
+          const started = nowMs();
           const { data } = await documentsApi.uploadBatch(files, { ...fields, category });
+          startupDuration('PDF upload-batch request', started);
           const uploaded = data.data.documents;
           set({
             documents: [...uploaded, ...get().documents],
@@ -87,6 +90,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       }
 
       const uploaded: Document[] = [];
+      const seqStarted = nowMs();
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         set({ uploadProgress: `Uploading ${i + 1}/${files.length}: ${file.name}` });
@@ -98,6 +102,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         });
         uploaded.push(data.data.document);
       }
+      startupDuration('PDF upload-sequential request', seqStarted);
 
       set({
         documents: [...uploaded, ...get().documents],

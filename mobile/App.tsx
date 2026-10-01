@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { PaperProvider, Snackbar } from 'react-native-paper';
@@ -8,10 +9,17 @@ import * as SplashScreen from 'expo-splash-screen';
 import { paperTheme } from '@/core/theme/paper';
 import RootNavigator from '@/navigation/RootNavigator';
 import { useAuthStore } from '@/store/authStore';
+import { useDashboardStore } from '@/store/dashboardStore';
 import { useUIStore } from '@/store/uiStore';
-import { startupMark } from '@/utils/startupPerf';
+import { clearDashboardCache } from '@/utils/dashboardCache';
+import { markSplashHidden, startupMark } from '@/utils/startupPerf';
 
 SplashScreen.preventAutoHideAsync();
+
+function hideNativeSplash(source: string) {
+  if (!markSplashHidden(source)) return;
+  void SplashScreen.hideAsync();
+}
 
 function AppContent() {
   const navigationRef = useNavigationContainerRef();
@@ -22,15 +30,18 @@ function AppContent() {
 
   useEffect(() => {
     startupMark('AppContent mounted');
+    startupMark('FIRST SCREEN RENDER');
     void initialize();
-    const failsafe = setTimeout(() => {
-      void SplashScreen.hideAsync().then(() => startupMark('SPLASH HIDDEN (failsafe)'));
-    }, 3000);
+    // Last-resort only. Primary hide is NavigationContainer onReady after auth is known.
+    const failsafe = setTimeout(() => hideNativeSplash('failsafe-8s'), 8000);
     return () => clearTimeout(failsafe);
   }, [initialize]);
 
   useEffect(() => {
-    if (!isInitialized || isAuthenticated || !navigationRef.isReady()) return;
+    if (!isInitialized || isAuthenticated) return;
+    useDashboardStore.getState().reset();
+    void clearDashboardCache();
+    if (!navigationRef.isReady()) return;
     const route = navigationRef.getCurrentRoute()?.name;
     if (!route || route === 'Splash' || route === 'Login' || route === 'Signup') return;
     navigationRef.reset({
@@ -40,8 +51,13 @@ function AppContent() {
   }, [isAuthenticated, isInitialized, navigationRef]);
 
   if (!isInitialized) {
-    // Keep the native splash up until the local token has been read.
-    return null;
+    // Native splash stays up until Login/Home is ready. This tree is only
+    // visible if the 8s failsafe hid the splash while SecureStore is still slow.
+    return (
+      <View style={styles.boot}>
+        <ActivityIndicator size="large" color="#4A90D9" />
+      </View>
+    );
   }
 
   return (
@@ -51,7 +67,7 @@ function AppContent() {
         ref={navigationRef}
         onReady={() => {
           startupMark('NAVIGATION READY');
-          void SplashScreen.hideAsync().then(() => startupMark('SPLASH HIDDEN'));
+          hideNativeSplash('navigation-ready');
         }}
       >
         <RootNavigator />
@@ -84,3 +100,12 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  boot: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});

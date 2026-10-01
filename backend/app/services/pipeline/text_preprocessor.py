@@ -8,8 +8,10 @@ question pattern cleanup → deduplication → normalized text.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 
+from app.utils.perf import perf_mark
 from app.utils.watermark_filter import remove_watermarks_from_text
 
 # Exam boilerplate — drop only when the line is purely administrative.
@@ -160,6 +162,7 @@ def _is_question_candidate(line: str) -> bool:
 
 def preprocess_pyq_text(raw_text: str) -> PreprocessResult:
     """Full cleaning pass on extracted PYQ text."""
+    started = time.perf_counter()
     original_len = len(raw_text or "")
     text = remove_watermarks_from_text(raw_text or "")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -199,6 +202,13 @@ def preprocess_pyq_text(raw_text: str) -> PreprocessResult:
         cleaned_chars=len(cleaned_text),
         lines_removed=removed,
         lines_deduplicated=deduped,
+    )
+    perf_mark(
+        "text_preprocess",
+        started,
+        chars_in=original_len,
+        chars_out=len(cleaned_text),
+        questions=len(question_lines),
     )
     return PreprocessResult(
         cleaned_text=cleaned_text,

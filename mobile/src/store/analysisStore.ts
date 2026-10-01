@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import { analysisApi } from '@/data/api/endpoints';
 import { getErrorMessage } from '@/data/api/client';
 import type { PYQAnalysis } from '@/domain/types';
+import { pollWithBackoff } from '@/utils/pollWithBackoff';
+import { startupDuration, nowMs } from '@/utils/startupPerf';
 
 interface AnalysisState {
   analyses: PYQAnalysis[];
@@ -63,16 +65,26 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   },
 
   pollAnalysis: async (id) => {
-    const poll = async (): Promise<PYQAnalysis> => {
-      const { data } = await analysisApi.get(id);
-      const analysis = data.data;
-      set({ currentAnalysis: analysis });
-      if (analysis.status === 'processing' || analysis.status === 'pending') {
-        await new Promise((r) => setTimeout(r, 1500));
-        return poll();
-      }
+    const started = nowMs();
+    try {
+      const analysis = await pollWithBackoff({
+        fn: async () => {
+          const { data } = await analysisApi.get(id);
+          return data.data;
+        },
+        isDone: (item) => item.status !== 'processing' && item.status !== 'pending',
+        intervalsMs: [2000, 3000, 5000, 8000],
+        maxAttempts: 40,
+        timeoutMs: 180_000,
+        onAttempt: (_attempt, item) => {
+          set({ currentAnalysis: item });
+        },
+      });
+      startupDuration(`analysis poll ${id}`, started);
       return analysis;
-    };
-    return poll();
+    } catch (error) {
+      set({ error: getErrorMessage(error) });
+      throw error;
+    }
   },
 }));

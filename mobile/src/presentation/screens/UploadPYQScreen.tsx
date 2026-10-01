@@ -20,6 +20,8 @@ import { useDocumentStore } from '@/store/documentStore';
 import { useAnalysisStore } from '@/store/analysisStore';
 import { useUIStore } from '@/store/uiStore';
 import { mergeFiles, pickMultiplePdfs } from '@/utils/pickDocuments';
+import { pollWithBackoff } from '@/utils/pollWithBackoff';
+import { nowMs, startupDuration } from '@/utils/startupPerf';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'UploadPYQ'>;
 type Route = RouteProp<RootStackParamList, 'UploadPYQ'>;
@@ -128,11 +130,13 @@ export default function UploadPYQScreen() {
 
     const trimmedSubject = subject.trim();
 
+    const uploadStarted = nowMs();
     try {
       const docs = await uploadDocuments(files, {
         category,
         subject: trimmedSubject || undefined,
       });
+      startupDuration('PDF upload request', uploadStarted);
 
       // Syllabus is source material — upload & extract only (no PYQ analysis).
       if (category === 'syllabus') {
@@ -152,15 +156,19 @@ export default function UploadPYQScreen() {
 
       setIsAnalyzing(true);
       setStatusMessage('Waiting for text extraction...');
+      const processStarted = nowMs();
       await waitForDocuments(docs.map((d) => d.id));
+      startupDuration('document processing (poll)', processStarted);
 
       setStatusMessage('Running analysis...');
+      const analysisStarted = nowMs();
       const analysis = await createAnalysis(
         docs.map((d) => d.id),
         trimmedSubject || undefined,
         title
       );
       const completed = await pollAnalysis(analysis.id);
+      startupDuration('analysis (create+poll)', analysisStarted);
       setIsAnalyzing(false);
       setStatusMessage(null);
 
@@ -177,17 +185,19 @@ export default function UploadPYQScreen() {
   };
 
   const waitForDocument = async (id: string): Promise<void> => {
-    const poll = async (): Promise<void> => {
-      const { data } = await documentsApi.getStatus(id);
-      if (data.data.status === 'processing' || data.data.status === 'uploading') {
-        await new Promise((r) => setTimeout(r, 2000));
-        return poll();
-      }
-      if (data.data.status === 'failed') {
-        throw new Error(data.data.error_message ?? 'Document processing failed');
-      }
-    };
-    return poll();
+    const status = await pollWithBackoff({
+      fn: async () => {
+        const { data } = await documentsApi.getStatus(id);
+        return data.data;
+      },
+      isDone: (item) => item.status !== 'processing' && item.status !== 'uploading',
+      intervalsMs: [2000, 3000, 5000, 8000],
+      maxAttempts: 40,
+      timeoutMs: 180_000,
+    });
+    if (status.status === 'failed') {
+      throw new Error(status.error_message ?? 'Document processing failed');
+    }
   };
 
   const waitForDocuments = async (ids: string[]): Promise<void> => {

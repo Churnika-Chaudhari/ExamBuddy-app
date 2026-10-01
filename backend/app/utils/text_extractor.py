@@ -1,8 +1,10 @@
 import io
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from app.utils.perf import perf_mark
 from app.utils.text_sanitizer import clean_extracted_text
 from app.utils.watermark_filter import remove_watermarks_from_pages, remove_watermarks_from_text
 
@@ -13,9 +15,6 @@ _MIN_CHARS_PER_PAGE = 40
 # 160 DPI is ~2x faster than 220 with little quality loss for exam papers.
 _OCR_DPI = 160
 _OCR_WORKERS = 3
-# Skip OCR entirely when embedded text is already plentiful.
-_TEXT_RICH_CHARS_PER_PAGE = 450
-_TEXT_RICH_SPARSE_RATIO = 0.2
 # Cap image OCR width for speed.
 _IMAGE_OCR_MAX_WIDTH = 1600
 
@@ -54,51 +53,74 @@ def _render_page_image(doc: Any, index: int):
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
-def _should_skip_ocr(page_texts: list[str], sparse_pages: list[int]) -> bool:
-    """True when the PDF already has enough selectable text."""
-    page_count = max(len(page_texts), 1)
-    total_chars = sum(len((t or "").strip()) for t in page_texts)
-    sparse_ratio = len(sparse_pages) / page_count
-    return (
-        total_chars >= _TEXT_RICH_CHARS_PER_PAGE * page_count
-        and sparse_ratio <= _TEXT_RICH_SPARSE_RATIO
-    )
+def _render_and_ocr_page(file_bytes: bytes, index: int) -> tuple[int, str, float, float]:
+    """
+    Render one page to an image and OCR it.
+
+    Opens its own fitz.Document from the raw bytes because a shared Document is
+    not thread-safe. This lets rendering AND OCR run concurrently across pages.
+    """
+    import fitz  # PyMuPDF
+
+    render_started = time.perf_counter()
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    try:
+        image = _render_page_image(doc, index)
+    finally:
+        doc.close()
+    render_s = time.perf_counter() - render_started
+
+    recognize_started = time.perf_counter()
+    text = _ocr_image(image)
+    recognize_s = time.perf_counter() - recognize_started
+    return index, text, render_s, recognize_s
 
 
-def _ocr_sparse_pages(doc: Any, page_texts: list[str], sparse_pages: list[int]) -> int:
-    """OCR sparse pages in parallel. Returns how many pages were replaced."""
+def _ocr_sparse_pages(
+    file_bytes: bytes, page_texts: list[str], sparse_pages: list[int]
+) -> int:
+    """OCR sparse pages with parallel render+OCR. Returns pages replaced."""
     if not sparse_pages:
         return 0
 
-    # Render sequentially (PyMuPDF doc is not thread-safe), OCR in parallel.
-    rendered: list[tuple[int, Any]] = []
-    for i in sparse_pages:
-        try:
-            rendered.append((i, _render_page_image(doc, i)))
-        except Exception as exc:
-            logger.warning("PDF render failed for page %d: %s", i + 1, exc)
-
-    if not rendered:
-        return 0
-
+    # Each worker opens its own Document (shared fitz.Document is not
+    # thread-safe), so rendering and OCR both run concurrently across pages.
+    started = time.perf_counter()
     replaced = 0
-    workers = min(_OCR_WORKERS, len(rendered))
+    render_s = 0.0
+    recognize_s = 0.0
+    workers = min(_OCR_WORKERS, len(sparse_pages))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_ocr_image, image): idx for idx, image in rendered}
+        futures = {
+            pool.submit(_render_and_ocr_page, file_bytes, idx): idx for idx in sparse_pages
+        }
         for fut in as_completed(futures):
             idx = futures[fut]
             try:
-                ocr_text = fut.result() or ""
+                _, ocr_text, page_render_s, page_recognize_s = fut.result()
+                ocr_text = ocr_text or ""
+                render_s += page_render_s
+                recognize_s += page_recognize_s
             except Exception as exc:
                 logger.warning("PDF OCR failed for page %d: %s", idx + 1, exc)
                 continue
             if len(ocr_text) > len(page_texts[idx].strip()):
                 page_texts[idx] = ocr_text
                 replaced += 1
+    logger.info(
+        "[PERF] ocr_render_cpu: %.1fms pages=%d | ocr_recognize_cpu: %.1fms replaced=%d workers=%d",
+        render_s * 1000,
+        len(sparse_pages),
+        recognize_s * 1000,
+        replaced,
+        workers,
+    )
+    perf_mark("ocr_render+recognize", started, pages=len(sparse_pages), replaced=replaced, workers=workers)
     return replaced
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> tuple[str, int]:
+    extract_started = time.perf_counter()
     try:
         import fitz  # PyMuPDF
 
@@ -114,22 +136,16 @@ def extract_text_from_pdf(file_bytes: bytes) -> tuple[str, int]:
             page_texts.append(text)
             if len(text.strip()) < _MIN_CHARS_PER_PAGE:
                 sparse_pages.append(i)
+        perf_mark("pdf_text_extract", extract_started, pages=page_count, sparse=len(sparse_pages))
 
         ocr_replaced = 0
         if sparse_pages and _ocr_available():
-            if _should_skip_ocr(page_texts, sparse_pages):
-                logger.info(
-                    "Skipping OCR — text-rich PDF pages=%d sparse=%d",
-                    page_count,
-                    len(sparse_pages),
-                )
-            else:
-                logger.info(
-                    "Running parallel OCR on %d sparse PDF page(s) dpi=%d",
-                    len(sparse_pages),
-                    _OCR_DPI,
-                )
-                ocr_replaced = _ocr_sparse_pages(doc, page_texts, sparse_pages)
+            logger.info(
+                "Running parallel OCR on %d sparse PDF page(s) dpi=%d",
+                len(sparse_pages),
+                _OCR_DPI,
+            )
+            ocr_replaced = _ocr_sparse_pages(file_bytes, page_texts, sparse_pages)
 
         doc.close()
 
@@ -146,6 +162,13 @@ def extract_text_from_pdf(file_bytes: bytes) -> tuple[str, int]:
             len(cleaned),
             len(sparse_pages),
             ocr_replaced,
+        )
+        perf_mark(
+            "pdf_extract_total",
+            extract_started,
+            pages=page_count,
+            sparse=len(sparse_pages),
+            ocr_replaced=ocr_replaced,
         )
         return cleaned, page_count
     except Exception as exc:
