@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, status
 
 from app.api.deps import get_quiz_service
 from app.core.dependencies import get_current_user
@@ -15,12 +15,23 @@ from app.services.quiz_service import QuizService
 router = APIRouter(prefix="/quiz", tags=["Quiz"])
 
 
+@router.get("/history/subjects", summary="List subjects that have quiz history for the current user")
+async def list_quiz_history_subjects(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    quiz_service: Annotated[QuizService, Depends(get_quiz_service)],
+):
+    data = await quiz_service.list_history_subjects(str(current_user["_id"]))
+    return success_response(data)
+
+
 @router.get("/history", summary="List quiz attempt history")
 async def list_quiz_history(
     current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     quiz_service: Annotated[QuizService, Depends(get_quiz_service)],
     pagination: Annotated[PaginationParams, Depends()],
     subject: str | None = None,
+    subject_id: str | None = None,
+    subjectId: str | None = None,
     search: str | None = None,
 ):
     attempts, total = await quiz_service.list_attempt_history(
@@ -28,6 +39,7 @@ async def list_quiz_history(
         page=pagination.page,
         limit=pagination.limit,
         subject=subject,
+        subject_id=subject_id or subjectId,
         search=search,
     )
     return paginated_response(attempts, pagination.page, pagination.limit, total)

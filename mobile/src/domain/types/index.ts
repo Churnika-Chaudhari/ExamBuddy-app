@@ -218,6 +218,7 @@ export interface QuizAttempt {
   quiz_id: string;
   quiz_title?: string | null;
   subject?: string | null;
+  subject_id?: string | null;
   difficulty?: QuizDifficulty | null;
   quiz_type?: QuizQuestionType | null;
   score: number;

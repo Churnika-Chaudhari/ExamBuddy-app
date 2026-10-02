@@ -15,6 +15,7 @@ from app.repositories.quiz_repository import (
     QuizRepository,
 )
 from app.repositories.stats_repository import StatsRepository
+from app.repositories.subject_repository import SubjectRepository
 from app.services.ai.ai_service import AIService
 from app.services.mappers import map_document_response, map_quiz_response
 from app.utils.topic_extractor import filter_topics
@@ -101,6 +102,7 @@ class QuizService:
         notes_repo: NotesRepository,
         stats_repo: StatsRepository,
         analysis_stats_repo: QuizAnalysisRepository,
+        subject_repo: SubjectRepository,
         ai_service: AIService | None = None,
     ) -> None:
         self.quiz_repo = quiz_repo
@@ -111,7 +113,16 @@ class QuizService:
         self.notes_repo = notes_repo
         self.stats_repo = stats_repo
         self.analysis_stats_repo = analysis_stats_repo
+        self.subject_repo = subject_repo
         self.ai_service = ai_service or AIService()
+
+    async def _resolve_subject_id(self, user_id: str, subject_name: str | None) -> Any:
+        if not subject_name:
+            return None
+        doc = await self.subject_repo.get_by_name(user_id, subject_name)
+        if not doc:
+            return None
+        return doc.get("_id")
 
     async def get_available_subjects(self, user_id: str) -> list[dict[str, Any]]:
         subject_map: dict[str, dict[str, Any]] = {}
@@ -442,6 +453,9 @@ class QuizService:
         score = round((correct_count / total_count) * 100, 2) if total_count else 0.0
         completed_at = datetime.now(UTC)
         subject = quiz.get("subject")
+        subject_id = quiz.get("subject_id")
+        if not subject_id:
+            subject_id = await self._resolve_subject_id(user_id, subject)
 
         attempt = await self.attempt_repo.create(
             {
@@ -449,6 +463,7 @@ class QuizService:
                 "quiz_id": self.attempt_repo.to_object_id(quiz_id),
                 "quiz_title": quiz.get("title"),
                 "subject": subject,
+                "subject_id": subject_id,
                 "difficulty": quiz.get("difficulty"),
                 "quiz_type": quiz.get("quiz_type"),
                 "answers": graded_answers,
@@ -500,14 +515,64 @@ class QuizService:
         page: int,
         limit: int,
         subject: str | None = None,
+        subject_id: str | None = None,
         search: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         skip = (page - 1) * limit
+        subject_name_for_id: str | None = None
+        if subject_id:
+            try:
+                subject_doc = await self.subject_repo.get_by_id_and_user(subject_id, user_id)
+            except ValueError:
+                return [], 0
+            if not subject_doc:
+                return [], 0
+            subject_name_for_id = subject_doc.get("name")
         attempts = await self.attempt_repo.list_by_user(
-            user_id, skip=skip, limit=limit, subject=subject, search=search
+            user_id,
+            skip=skip,
+            limit=limit,
+            subject=None if subject_id else subject,
+            subject_id=subject_id,
+            subject_name_for_id=subject_name_for_id,
+            search=search,
         )
-        total = await self.attempt_repo.count_by_user(user_id, subject=subject)
+        total = await self.attempt_repo.count_by_user(
+            user_id,
+            subject=None if subject_id else subject,
+            subject_id=subject_id,
+            subject_name_for_id=subject_name_for_id,
+            search=search,
+        )
         return [map_document_response(a) for a in attempts], total
+
+    async def list_history_subjects(self, user_id: str) -> list[dict[str, str]]:
+        keys = await self.attempt_repo.list_distinct_subject_keys(user_id)
+        seen: set[str] = set()
+        subjects: list[dict[str, str]] = []
+
+        for key in keys:
+            raw_id = key.get("subject_id")
+            name = (key.get("subject") or "").strip()
+            subject_doc = None
+            if raw_id is not None and str(raw_id):
+                sid = str(raw_id)
+                try:
+                    subject_doc = await self.subject_repo.get_by_id_and_user(sid, user_id)
+                except ValueError:
+                    subject_doc = None
+            if subject_doc is None and name:
+                subject_doc = await self.subject_repo.get_by_name(user_id, name)
+            if not subject_doc:
+                continue
+            sid = str(subject_doc["_id"])
+            if sid in seen:
+                continue
+            seen.add(sid)
+            subjects.append({"id": sid, "name": subject_doc.get("name") or name})
+
+        subjects.sort(key=lambda s: s["name"].lower())
+        return subjects
 
     async def get_attempt(self, attempt_id: str, user_id: str) -> dict[str, Any]:
         attempt = await self.attempt_repo.get_by_id_and_user(attempt_id, user_id)

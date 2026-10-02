@@ -1,6 +1,8 @@
+import re
 from datetime import UTC, datetime
 from typing import Any
 
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.repositories.base_repository import BaseRepository
@@ -62,6 +64,49 @@ class QuizAttemptRepository(BaseRepository):
             sort=[("completed_at", -1)],
         )
 
+    def _user_history_query(
+        self,
+        user_id: str,
+        *,
+        subject: str | None = None,
+        subject_id: str | None = None,
+        subject_name_for_id: str | None = None,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        query: dict[str, Any] = {"user_id": self.to_object_id(user_id)}
+        if subject_id and ObjectId.is_valid(subject_id):
+            oid = ObjectId(subject_id)
+            clauses: list[dict[str, Any]] = [
+                {"subject_id": oid},
+                {"subject_id": subject_id},
+            ]
+            if subject_name_for_id:
+                clauses.append(
+                    {
+                        "$and": [
+                            {
+                                "$or": [
+                                    {"subject_id": {"$exists": False}},
+                                    {"subject_id": None},
+                                    {"subject_id": ""},
+                                ]
+                            },
+                            {
+                                "subject": {
+                                    "$regex": f"^{re.escape(subject_name_for_id)}$",
+                                    "$options": "i",
+                                }
+                            },
+                        ]
+                    }
+                )
+            query["$or"] = clauses
+        elif subject:
+            query["subject"] = subject
+        if search:
+            query["quiz_title"] = {"$regex": search, "$options": "i"}
+        return query
+
     async def list_by_user(
         self,
         user_id: str,
@@ -69,20 +114,61 @@ class QuizAttemptRepository(BaseRepository):
         skip: int = 0,
         limit: int = 20,
         subject: str | None = None,
+        subject_id: str | None = None,
+        subject_name_for_id: str | None = None,
         search: str | None = None,
     ) -> list[dict[str, Any]]:
-        query: dict[str, Any] = {"user_id": self.to_object_id(user_id)}
-        if subject:
-            query["subject"] = subject
-        if search:
-            query["quiz_title"] = {"$regex": search, "$options": "i"}
+        query = self._user_history_query(
+            user_id,
+            subject=subject,
+            subject_id=subject_id,
+            subject_name_for_id=subject_name_for_id,
+            search=search,
+        )
         return await self.find_many(query, skip=skip, limit=limit, sort=[("completed_at", -1)])
 
-    async def count_by_user(self, user_id: str, *, subject: str | None = None) -> int:
-        query: dict[str, Any] = {"user_id": self.to_object_id(user_id)}
-        if subject:
-            query["subject"] = subject
+    async def count_by_user(
+        self,
+        user_id: str,
+        *,
+        subject: str | None = None,
+        subject_id: str | None = None,
+        subject_name_for_id: str | None = None,
+        search: str | None = None,
+    ) -> int:
+        query = self._user_history_query(
+            user_id,
+            subject=subject,
+            subject_id=subject_id,
+            subject_name_for_id=subject_name_for_id,
+            search=search,
+        )
         return await self.count(query)
+
+    async def list_distinct_subject_keys(self, user_id: str) -> list[dict[str, Any]]:
+        pipeline = [
+            {"$match": {"user_id": self.to_object_id(user_id)}},
+            {
+                "$group": {
+                    "_id": {
+                        "subject_id": "$subject_id",
+                        "subject": "$subject",
+                    }
+                }
+            },
+        ]
+        cursor = self.collection.aggregate(pipeline)
+        rows = await cursor.to_list(length=200)
+        keys: list[dict[str, Any]] = []
+        for row in rows:
+            group = row.get("_id") or {}
+            keys.append(
+                {
+                    "subject_id": group.get("subject_id"),
+                    "subject": group.get("subject"),
+                }
+            )
+        return keys
 
     async def delete(self, attempt_id: str, user_id: str) -> bool:
         result = await self.collection.delete_one(

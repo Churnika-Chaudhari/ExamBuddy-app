@@ -311,10 +311,13 @@ export const quizApi = {
 
   deleteSubject: (subjectId: string) => subjectsApi.delete(subjectId),
 
-  listHistory: (page = 1, subject?: string, search?: string) =>
+  listHistory: (page = 1, subjectId?: string, search?: string) =>
     apiClient.get<PaginatedApiResponse<QuizAttempt>>('/quiz/history', {
-      params: { page, subject, search },
+      params: { page, subjectId, search },
     }),
+
+  listHistorySubjects: () =>
+    apiClient.get<ApiResponse<Pick<QuizSubject, 'id' | 'name'>[]>>('/quiz/history/subjects'),
 
   getAttempt: (attemptId: string) =>
     apiClient.get<ApiResponse<QuizAttempt>>(`/quiz/attempts/${attemptId}`),

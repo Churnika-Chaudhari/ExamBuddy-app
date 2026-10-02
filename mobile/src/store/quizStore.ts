@@ -19,6 +19,7 @@ interface QuizState {
   subjectTopics: SubjectTopic[];
   selectedSubject: string | null;
   history: QuizAttempt[];
+  historySubjects: Pick<QuizSubject, 'id' | 'name'>[];
   analysis: QuizAnalysis | null;
   activeQuiz: Quiz | null;
   lastResult: QuizSubmitResult | null;
@@ -43,7 +44,9 @@ interface QuizState {
     answers: { question_id: string; user_answer: string }[],
     timeTaken?: number
   ) => Promise<QuizSubmitResult>;
-  fetchHistory: (subject?: string, search?: string) => Promise<void>;
+  fetchHistory: (subjectId?: string, search?: string) => Promise<void>;
+  fetchHistorySubjects: () => Promise<Pick<QuizSubject, 'id' | 'name'>[]>;
+  clearHistory: () => void;
   fetchAnalysis: (subject: string) => Promise<QuizAnalysis | null>;
   fetchAttempt: (attemptId: string) => Promise<QuizAttempt>;
   deleteAttempt: (attemptId: string) => Promise<void>;
@@ -59,6 +62,7 @@ export const useQuizStore = create<QuizState>((set, get) => ({
   subjectTopics: [],
   selectedSubject: null,
   history: [],
+  historySubjects: [],
   analysis: null,
   activeQuiz: null,
   lastResult: null,
@@ -185,13 +189,25 @@ export const useQuizStore = create<QuizState>((set, get) => ({
     }
   },
 
-  fetchHistory: async (subject, search) => {
+  fetchHistory: async (subjectId, search) => {
     set({ isLoading: true, error: null });
     try {
-      const { data } = await quizApi.listHistory(1, subject, search);
+      const { data } = await quizApi.listHistory(1, subjectId, search);
       set({ history: data.data, isLoading: false });
     } catch (error) {
+      set({ error: getErrorMessage(error), isLoading: false, history: [] });
+    }
+  },
+
+  fetchHistorySubjects: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const { data } = await quizApi.listHistorySubjects();
+      set({ historySubjects: data.data, isLoading: false });
+      return data.data;
+    } catch (error) {
       set({ error: getErrorMessage(error), isLoading: false });
+      throw error;
     }
   },
 
@@ -235,5 +251,6 @@ export const useQuizStore = create<QuizState>((set, get) => ({
   },
 
   setSelectedSubject: (subject) => set({ selectedSubject: subject }),
+  clearHistory: () => set({ history: [], error: null }),
   clearLastResult: () => set({ lastResult: null }),
 }));

@@ -55,6 +55,7 @@ async def create_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.quizzes.create_index([("user_id", 1), ("subject", 1)])
     await db.quiz_attempts.create_index([("user_id", 1), ("completed_at", -1)])
     await db.quiz_attempts.create_index([("user_id", 1), ("subject", 1)])
+    await db.quiz_attempts.create_index([("user_id", 1), ("subject_id", 1)])
     await db.quiz_attempts.create_index("quiz_id")
     await db.quiz_analysis.create_index([("user_id", 1), ("subject", 1), ("topic", 1)], unique=True)
     await db.quiz_analysis.create_index([("user_id", 1), ("accuracy_percentage", 1)])

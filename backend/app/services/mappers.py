@@ -62,4 +62,6 @@ def map_document_response(document: dict[str, Any]) -> dict[str, Any]:
         serialized["source_analysis_id"] = str(document["source_analysis_id"])
     if "quiz_id" in document and document.get("quiz_id"):
         serialized["quiz_id"] = str(document["quiz_id"])
+    if document.get("subject_id"):
+        serialized["subject_id"] = str(document["subject_id"])
     return serialized

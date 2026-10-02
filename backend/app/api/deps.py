@@ -163,6 +163,7 @@ def get_quiz_service(
     notes_repo: Annotated[NotesRepository, Depends(get_notes_repo)],
     stats_repo: Annotated[StatsRepository, Depends(get_stats_repo)],
     quiz_analysis_repo: Annotated[QuizAnalysisRepository, Depends(get_quiz_analysis_repo)],
+    subject_repo: Annotated[SubjectRepository, Depends(get_subject_repo)],
     ai_service: Annotated[AIService, Depends(get_ai_service)],
 ) -> QuizService:
     return QuizService(
@@ -174,6 +175,7 @@ def get_quiz_service(
         notes_repo,
         stats_repo,
         quiz_analysis_repo,
+        subject_repo,
         ai_service,
     )
 
