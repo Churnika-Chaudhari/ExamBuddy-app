@@ -115,8 +115,8 @@ export default function AnalysisResultScreen() {
       const pyq = await subjectsApi.filterPyq(match.id);
       const payload = pyq.data.data;
       setModules(payload.modules);
-      setSelectedIds(payload.modules.map((m) => m.module_id));
-      setIncludeUnmapped(payload.modules.some((m) => m.is_unmapped));
+      setSelectedIds([]);
+      setIncludeUnmapped(false);
       setFiltered(payload);
     } catch (err) {
       showSnackbar(getErrorMessage(err), 'error');

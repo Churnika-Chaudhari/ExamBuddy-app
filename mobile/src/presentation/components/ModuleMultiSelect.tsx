@@ -60,7 +60,10 @@ export default function ModuleMultiSelect({
     onChange(ids);
   };
 
-  const clearAll = () => onChange([]);
+  const clearAll = () => {
+    onIncludeUnmappedChange(false);
+    onChange([]);
+  };
 
   const renderRow = (mod: SubjectModule) => {
     const checked = selectedSet.has(mod.module_id);
@@ -108,7 +111,11 @@ export default function ModuleMultiSelect({
         </Pressable>
       </View>
 
-      {selectable.map(renderRow)}
+      {selectable.length === 0 ? (
+        <Text style={styles.emptyModules}>No modules available for this subject.</Text>
+      ) : (
+        selectable.map(renderRow)
+      )}
 
       {unmapped ? (
         <View style={styles.unmappedBlock}>
@@ -224,6 +231,11 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  emptyModules: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    paddingVertical: spacing.sm,
   },
   unmappedBlock: {
     marginTop: spacing.xs,

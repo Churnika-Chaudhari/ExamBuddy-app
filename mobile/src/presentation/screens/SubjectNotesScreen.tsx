@@ -40,13 +40,6 @@ function sourceSummary(o: SubjectOverview): string {
   return parts.length ? parts.join(' · ') : 'No uploaded sources yet';
 }
 
-function allSelectableIds(modules: SubjectModule[], includeUnmapped: boolean): string[] {
-  const ids = modules.filter(isRealSyllabusModule).map((m) => m.module_id);
-  const unmapped = modules.find((m) => m.is_unmapped);
-  if (includeUnmapped && unmapped) ids.push(unmapped.module_id);
-  return ids;
-}
-
 export default function SubjectNotesScreen() {
   const route = useRoute<Route>();
   const navigation = useNavigation<Nav>();
@@ -84,18 +77,11 @@ export default function SubjectNotesScreen() {
       navigation.setOptions({ title: ov.subject || subjectName || 'Subject Notes' });
 
       const syllabusMods = (ov.modules || []).filter(isRealSyllabusModule);
-      const unmapped = (ov.modules || []).find((m) => m.is_unmapped);
-      const includeUnmapped = Boolean(unmapped);
-      const initialIds = allSelectableIds(ov.modules || [], includeUnmapped);
-      setDraftIds(initialIds);
-      setDraftUnmapped(includeUnmapped);
+      setDraftIds([]);
+      setDraftUnmapped(false);
 
       if (ov.has_syllabus_modules && syllabusMods.length) {
-        setDisplayedModules(
-          (ov.modules || []).filter(
-            (m) => isRealSyllabusModule(m) || (includeUnmapped && m.is_unmapped)
-          )
-        );
+        setDisplayedModules(syllabusMods);
       } else {
         setDisplayedModules([]);
       }

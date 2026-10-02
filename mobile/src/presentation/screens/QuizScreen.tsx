@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
-import { Text, ActivityIndicator, Chip, RadioButton, SegmentedButtons } from 'react-native-paper';
+import { useCallback, useMemo, useState } from 'react';
+import { Alert, FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text, ActivityIndicator, Chip, RadioButton, Searchbar, SegmentedButtons } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -51,10 +51,18 @@ export default function QuizScreen() {
   const showSnackbar = useUIStore((s) => s.showSnackbar);
 
   const [selectedSubject, setSelectedSubject] = useState<QuizSubject | null>(null);
+  const [subjectPickerOpen, setSubjectPickerOpen] = useState(true);
+  const [subjectQuery, setSubjectQuery] = useState('');
   const [difficulty, setDifficulty] = useState<QuizDifficulty>('medium');
   const [numQuestions, setNumQuestions] = useState(10);
   const [generatingLabel, setGeneratingLabel] = useState<string | null>(null);
   const [subjectsError, setSubjectsError] = useState<string | null>(null);
+
+  const visibleSubjects = useMemo(() => {
+    const q = subjectQuery.trim().toLowerCase();
+    if (!q) return subjects;
+    return subjects.filter((s) => s.name.toLowerCase().includes(q));
+  }, [subjects, subjectQuery]);
 
   const loadSubjects = useCallback(async () => {
     setSubjectsError(null);
@@ -73,7 +81,14 @@ export default function QuizScreen() {
   );
 
   const handleSelectSubject = (subject: QuizSubject) => {
-    setSelectedSubject((prev) => (prev?.id === subject.id ? prev : subject));
+    setSelectedSubject(subject);
+    setSubjectQuery('');
+    setSubjectPickerOpen(false);
+  };
+
+  const handleChangeSubject = () => {
+    setSubjectQuery('');
+    setSubjectPickerOpen(true);
   };
 
   const handleGenerate = async () => {
@@ -115,7 +130,10 @@ export default function QuizScreen() {
           onPress: async () => {
             try {
               await deleteSubject(s.id);
-              if (selectedSubject?.id === s.id) setSelectedSubject(null);
+              if (selectedSubject?.id === s.id) {
+                setSelectedSubject(null);
+                setSubjectPickerOpen(true);
+              }
               showSnackbar('Subject removed', 'success');
             } catch (err) {
               showSnackbar(getErrorMessage(err), 'error');
@@ -241,61 +259,88 @@ export default function QuizScreen() {
               style={styles.retryBtn}
             />
           </View>
+        ) : selectedSubject && !subjectPickerOpen ? (
+          <View style={styles.selectedSubjectBox}>
+            <View style={styles.selectedSubjectRow}>
+              <Ionicons name="school-outline" size={18} color={colors.primary} />
+              <View style={styles.selectedSubjectInfo}>
+                <Text style={styles.selectedSubjectCaption}>Selected Subject</Text>
+                <Text style={styles.selectedSubjectName}>{selectedSubject.name}</Text>
+                <Text style={styles.selectedSubjectMeta}>
+                  {selectedSubject.pyq_count} PYQ papers · {selectedSubject.topic_count} topics
+                </Text>
+              </View>
+            </View>
+            <AppButton
+              label="Change Subject"
+              mode="outlined"
+              onPress={handleChangeSubject}
+              style={styles.changeSubjectBtn}
+            />
+          </View>
         ) : (
-          <View style={styles.subjectList}>
-            {subjects.map((s) => {
-              const active = selectedSubject?.id === s.id;
-              return (
-                <Pressable
-                  key={s.id}
-                  onPress={() => handleSelectSubject(s)}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: active }}
-                  accessibilityLabel={`${s.name}, ${s.pyq_count} analyzed PYQs, ${s.topic_count} topics`}
-                  style={[styles.subjectRowCard, active && styles.subjectRowCardActive]}
-                >
-                  <RadioButton
-                    value={s.id}
-                    status={active ? 'checked' : 'unchecked'}
-                    onPress={() => handleSelectSubject(s)}
-                    color={colors.primary}
-                  />
-                  <View style={styles.subjectRowInfo}>
-                    <Text style={[styles.subjectRowName, active && styles.subjectRowNameActive]}>
-                      {s.name}
-                    </Text>
-                    <Text style={styles.subjectRowMeta}>
-                      {s.pyq_count} analyzed PYQ{s.pyq_count === 1 ? '' : 's'} · {s.topic_count}{' '}
-                      topic{s.topic_count === 1 ? '' : 's'}
-                    </Text>
-                  </View>
-                  <Pressable
-                    hitSlop={8}
-                    onPress={() => confirmDeleteSubject(s)}
-                    accessibilityLabel={`Remove ${s.name}`}
-                    style={styles.subjectRowDelete}
-                  >
-                    <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
-                  </Pressable>
-                </Pressable>
-              );
-            })}
+          <View>
+            <Searchbar
+              placeholder="Search subject..."
+              value={subjectQuery}
+              onChangeText={setSubjectQuery}
+              style={styles.subjectSearch}
+              inputStyle={styles.subjectSearchInput}
+            />
+            {visibleSubjects.length === 0 ? (
+              <Text style={styles.noSubjectsFound}>No subjects found</Text>
+            ) : (
+              <ScrollView
+                style={styles.subjectScroll}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+              >
+                <View style={styles.subjectList}>
+                  {visibleSubjects.map((s) => {
+                    const active = selectedSubject?.id === s.id;
+                    return (
+                      <Pressable
+                        key={s.id}
+                        onPress={() => handleSelectSubject(s)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: active }}
+                        accessibilityLabel={`${s.name}, ${s.pyq_count} analyzed PYQs, ${s.topic_count} topics`}
+                        style={[styles.subjectRowCard, active && styles.subjectRowCardActive]}
+                      >
+                        <RadioButton
+                          value={s.id}
+                          status={active ? 'checked' : 'unchecked'}
+                          onPress={() => handleSelectSubject(s)}
+                          color={colors.primary}
+                        />
+                        <View style={styles.subjectRowInfo}>
+                          <Text style={[styles.subjectRowName, active && styles.subjectRowNameActive]}>
+                            {s.name}
+                          </Text>
+                          <Text style={styles.subjectRowMeta}>
+                            {s.pyq_count} analyzed PYQ{s.pyq_count === 1 ? '' : 's'} · {s.topic_count}{' '}
+                            topic{s.topic_count === 1 ? '' : 's'}
+                          </Text>
+                        </View>
+                        <Pressable
+                          hitSlop={8}
+                          onPress={() => confirmDeleteSubject(s)}
+                          accessibilityLabel={`Remove ${s.name}`}
+                          style={styles.subjectRowDelete}
+                        >
+                          <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
+                        </Pressable>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            )}
+            {!selectedSubject ? (
+              <Text style={styles.pickHint}>Select a subject above to start</Text>
+            ) : null}
           </View>
         )}
-
-        {selectedSubject ? (
-          <View style={styles.selectedSubjectBox}>
-            <Ionicons name="school-outline" size={18} color={colors.primary} />
-            <View style={styles.selectedSubjectInfo}>
-              <Text style={styles.selectedSubjectName}>{selectedSubject.name}</Text>
-              <Text style={styles.selectedSubjectMeta}>
-                {selectedSubject.pyq_count} PYQ papers · {selectedSubject.topic_count} topics
-              </Text>
-            </View>
-          </View>
-        ) : subjects.length > 0 && !isLoading && !subjectsError ? (
-          <Text style={styles.pickHint}>Select a subject above to start</Text>
-        ) : null}
 
         <Text style={styles.fieldLabel}>Difficulty</Text>
         <SegmentedButtons
@@ -513,28 +558,58 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   selectedSubjectBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
     backgroundColor: colors.primaryLight,
     borderRadius: radius.md,
     padding: spacing.sm,
     marginTop: spacing.sm,
     marginBottom: spacing.sm,
   },
+  selectedSubjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
   selectedSubjectInfo: {
     flex: 1,
     minWidth: 0,
+  },
+  selectedSubjectCaption: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '700',
+    textTransform: 'uppercase',
   },
   selectedSubjectName: {
     ...typography.label,
     color: colors.primary,
     fontWeight: '700',
+    marginTop: 2,
   },
   selectedSubjectMeta: {
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  changeSubjectBtn: {
+    marginTop: spacing.sm,
+    alignSelf: 'flex-start',
+  },
+  subjectSearch: {
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surface,
+  },
+  subjectSearchInput: {
+    ...typography.bodySmall,
+  },
+  subjectScroll: {
+    maxHeight: 280,
+    marginBottom: spacing.xs,
+  },
+  noSubjectsFound: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+    paddingVertical: spacing.sm,
   },
   pickHint: {
     ...typography.caption,

@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, TouchableOpacity, View } from 'react-native';
-import { Text, ActivityIndicator, RadioButton } from 'react-native-paper';
+import { Text, ActivityIndicator, RadioButton, Searchbar } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,7 +22,15 @@ export default function QuizSubjectSelectScreen() {
   const navigation = useNavigation<Nav>();
   const { subjects, isLoading, fetchSubjects, setSelectedSubject } = useQuizStore();
   const showSnackbar = useUIStore((s) => s.showSnackbar);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(true);
+  const [query, setQuery] = useState('');
+
+  const visibleSubjects = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return subjects;
+    return subjects.filter((s) => s.name.toLowerCase().includes(q));
+  }, [subjects, query]);
 
   useFocusEffect(
     useCallback(() => {
@@ -30,18 +38,31 @@ export default function QuizSubjectSelectScreen() {
     }, [fetchSubjects, showSnackbar])
   );
 
+  const selectedSubject = subjects.find((s) => s.id === selectedId) ?? null;
+
+  const handleSelectSubject = (id: string) => {
+    setSelectedId(id);
+    setQuery('');
+    setPickerOpen(false);
+  };
+
+  const handleChangeSubject = () => {
+    setQuery('');
+    setPickerOpen(true);
+  };
+
   const handleContinue = () => {
-    if (!selected) return;
-    const subject = subjects.find((s) => s.name === selected);
+    if (!selectedId) return;
+    const subject = subjects.find((s) => s.id === selectedId);
     if (!subject) return;
-    setSelectedSubject(selected);
+    setSelectedSubject(subject.name);
     navigation.navigate('QuizConfig', { subject: subject.name, subjectId: subject.id });
   };
 
   const renderSubject = ({ item }: { item: QuizSubject }) => {
-    const isSelected = selected === item.name;
+    const isSelected = selectedId === item.id;
     return (
-      <TouchableOpacity onPress={() => setSelected(item.name)} activeOpacity={0.7}>
+      <TouchableOpacity onPress={() => handleSelectSubject(item.id)} activeOpacity={0.7}>
         <AppCard
           style={{
             ...styles.card,
@@ -50,9 +71,9 @@ export default function QuizSubjectSelectScreen() {
         >
           <View style={styles.row}>
             <RadioButton
-              value={item.name}
+              value={item.id}
               status={isSelected ? 'checked' : 'unchecked'}
-              onPress={() => setSelected(item.name)}
+              onPress={() => handleSelectSubject(item.id)}
               color={colors.primary}
             />
             <View style={styles.info}>
@@ -90,25 +111,56 @@ export default function QuizSubjectSelectScreen() {
         </Text>
       </View>
 
-      <FlatList
-        data={subjects}
-        keyExtractor={(item) => item.name}
-        renderItem={renderSubject}
-        contentContainerStyle={styles.list}
-        ListEmptyComponent={
-          <EmptyState
-            icon="school-outline"
-            title="No subjects found"
-            subtitle="Upload and analyze PYQ papers first to detect subjects"
+      {selectedSubject && !pickerOpen ? (
+        <View style={styles.selectedWrap}>
+          <AppCard style={styles.selectedCard}>
+            <Text style={styles.selectedCaption}>Selected Subject</Text>
+            <Text style={styles.selectedName}>{selectedSubject.name}</Text>
+            <Text style={styles.selectedMeta}>
+              {selectedSubject.pyq_count} PYQs · {selectedSubject.topic_count} topics
+            </Text>
+            <AppButton
+              label="Change Subject"
+              mode="outlined"
+              onPress={handleChangeSubject}
+              style={styles.changeBtn}
+            />
+          </AppCard>
+        </View>
+      ) : (
+        <View style={styles.pickerWrap}>
+          <Searchbar
+            placeholder="Search subject..."
+            value={query}
+            onChangeText={setQuery}
+            style={styles.search}
           />
-        }
-      />
+
+          <FlatList
+            data={visibleSubjects}
+            keyExtractor={(item) => item.id}
+            renderItem={renderSubject}
+            contentContainerStyle={styles.list}
+            ListEmptyComponent={
+              <EmptyState
+                icon="school-outline"
+                title="No subjects found"
+                subtitle={
+                  query.trim()
+                    ? 'Try a different search.'
+                    : 'Upload and analyze PYQ papers first to detect subjects'
+                }
+              />
+            }
+          />
+        </View>
+      )}
 
       <View style={styles.footer}>
         <AppButton
           label="Continue"
           onPress={handleContinue}
-          disabled={!selected}
+          disabled={!selectedId}
           icon="arrow-right"
         />
       </View>
@@ -141,6 +193,42 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: spacing.xs,
     lineHeight: 20,
+  },
+  pickerWrap: {
+    flex: 1,
+  },
+  search: {
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surface,
+  },
+  selectedWrap: {
+    flex: 1,
+    padding: spacing.md,
+  },
+  selectedCard: {
+    padding: spacing.md,
+  },
+  selectedCaption: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  selectedName: {
+    ...typography.label,
+    color: colors.primary,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  selectedMeta: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  changeBtn: {
+    marginTop: spacing.sm,
+    alignSelf: 'flex-start',
   },
   list: {
     padding: spacing.md,
