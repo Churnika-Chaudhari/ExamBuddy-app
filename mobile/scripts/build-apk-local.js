@@ -7,9 +7,19 @@ const mobileDir = path.join(__dirname, '..');
 const sdk = path.join(process.env.LOCALAPPDATA || '', 'Android', 'Sdk');
 const gradleHome = process.env.GRADLE_USER_HOME || 'D:\\gradle';
 const tmpDir = process.env.TEMP || path.join(mobileDir, '.tmp');
-const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://10.167.199.44:8000/api/v1';
+const apiUrl = process.env.EXPO_PUBLIC_API_URL?.trim() ?? '';
 const buildVariant = process.env.APK_BUILD_VARIANT === 'release' ? 'release' : 'debug';
 const assembleTask = buildVariant === 'release' ? 'assembleRelease' : 'assembleDebug';
+
+if (
+  buildVariant === 'release' &&
+  (!apiUrl || !/^https?:\/\//i.test(apiUrl) || /localhost|127\.0\.0\.1/i.test(apiUrl))
+) {
+  console.error(
+    'Release APKs require EXPO_PUBLIC_API_URL to be a non-localhost http(s) URL. Use https:// for Play production.'
+  );
+  process.exit(1);
+}
 
 fs.mkdirSync(gradleHome, { recursive: true });
 fs.mkdirSync(tmpDir, { recursive: true });
@@ -27,14 +37,14 @@ const env = {
   GRADLE_USER_HOME: gradleHome,
   TEMP: tmpDir,
   TMP: tmpDir,
-  EXPO_PUBLIC_API_URL: apiUrl,
+  ...(apiUrl ? { EXPO_PUBLIC_API_URL: apiUrl } : {}),
 };
 
 console.log('\nSmartStudy local APK build');
 console.log('ANDROID_HOME:', sdk);
 console.log('GRADLE_USER_HOME:', gradleHome);
 console.log('TEMP/TMP:', tmpDir);
-console.log('API URL:', apiUrl);
+console.log('API URL:', apiUrl || '(development auto-detect)');
 console.log('Build variant:', buildVariant);
 console.log('');
 

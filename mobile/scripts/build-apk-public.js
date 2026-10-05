@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 /**
- * Build APK pointing at a public HTTPS API (Render, Railway, etc.).
- * Uses EXPO_PUBLIC_API_URL or defaults to the Render deployment.
+ * Build a release APK against the configured public HTTPS API.
+ * Set EXPO_PUBLIC_API_URL before running. The backend URL is not hardcoded here.
  */
-const DEFAULT_API_URL = 'https://exambuddy-app.onrender.com/api/v1';
-const DEFAULT_APK_NAME = 'SmartStudy-production.apk';
-
-if (!process.env.EXPO_PUBLIC_API_URL?.trim()) {
-  process.env.EXPO_PUBLIC_API_URL = DEFAULT_API_URL;
+const apiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+if (!apiUrl || !/^https:\/\//i.test(apiUrl)) {
+  console.error(
+    'Set EXPO_PUBLIC_API_URL to your HTTPS backend before building, for example https://YOUR-RENDER-BACKEND.onrender.com/api/v1'
+  );
+  process.exit(1);
 }
 
 process.env.EXPO_PUBLIC_API_FORCE = 'true';
-process.env.APK_OUTPUT_NAME = process.env.APK_OUTPUT_NAME || DEFAULT_APK_NAME;
+process.env.APK_OUTPUT_NAME = process.env.APK_OUTPUT_NAME || 'SmartStudy-production.apk';
 process.env.APK_BUILD_VARIANT = 'release';
 process.env.EXPO_PREBUILD = '1';
 

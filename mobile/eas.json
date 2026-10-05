@@ -14,11 +14,10 @@
       }
     },
     "production": {
+      "distribution": "store",
+      "environment": "production",
       "android": {
-        "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://exambuddy-app.onrender.com/api/v1"
+        "buildType": "app-bundle"
       }
     }
   }

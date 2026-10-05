@@ -1,5 +1,7 @@
 module.exports = function (api) {
-  api.cache(true);
+  api.cache.using(() =>
+    [process.env.EXPO_PUBLIC_API_URL ?? '', process.env.EXPO_PUBLIC_API_FORCE ?? ''].join('|')
+  );
   return {
     presets: ['babel-preset-expo'],
     plugins: [

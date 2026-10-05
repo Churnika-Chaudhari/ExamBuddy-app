@@ -16,19 +16,11 @@
         "backgroundColor": "#4A90D9"
       },
       "package": "com.smartstudy.app",
-      "versionCode": 1,
-      "usesCleartextTraffic": true,
-      "navigationBar": {
-        "backgroundColor": "#FFFFFF",
-        "barStyle": "dark-content"
-      }
+      "versionCode": 1
     },
     "newArchEnabled": false,
     "web": {
       "favicon": "./assets/favicon.png"
-    },
-    "extra": {
-      "apiUrl": "http://localhost:8000/api/v1"
     },
     "plugins": [
       [
@@ -40,6 +32,12 @@
           "imageWidth": 280
         }
       ]
-    ]
+    ],
+    "extra": {
+      "apiForce": false,
+      "eas": {
+        "projectId": "33b01c4b-670a-4452-9387-5ebfcbab5524"
+      }
+    }
   }
 }

@@ -80,19 +80,47 @@ function buildApiUrl(host: string): string {
   return `http://${host}:${API_PORT}${API_PATH}`;
 }
 
-function resolveApiUrl(): string {
-  const configured = process.env.EXPO_PUBLIC_API_URL?.trim();
-  const forceConfigured = process.env.EXPO_PUBLIC_API_FORCE === 'true';
-  const runtime = detectRuntimePlatform();
+function readConfiguredApiUrl(): string | undefined {
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim();
+  if (fromEnv) return fromEnv;
 
+  const extra = Constants.expoConfig?.extra?.apiUrl;
+  if (typeof extra === 'string' && extra.trim()) return extra.trim();
+  return undefined;
+}
+
+function isLoopbackApiUrl(url: string): boolean {
+  return /:\/\/(localhost|127\.0\.0\.1)(?::|\/|$)/i.test(url);
+}
+
+/** Release bundles must use the URL supplied at build time. No localhost fallback. */
+function resolveReleaseApiUrl(configured: string | undefined): string {
+  if (!configured || !/^https?:\/\//i.test(configured) || isLoopbackApiUrl(configured)) {
+    throw new Error(
+      'This release build has no production API URL. Set EXPO_PUBLIC_API_URL to your HTTPS backend before building.'
+    );
+  }
+  return configured;
+}
+
+function resolveApiUrl(): string {
+  const configured = readConfiguredApiUrl();
+  const forceConfigured =
+    process.env.EXPO_PUBLIC_API_FORCE === 'true' || Constants.expoConfig?.extra?.apiForce === true;
+
+  if (!__DEV__) {
+    return resolveReleaseApiUrl(configured);
+  }
+
+  // Development-only resolution. Release builds never reach this block.
   if (forceConfigured && configured) {
     return configured;
   }
 
+  const runtime = detectRuntimePlatform();
+
   if (runtime === 'web') {
-    return configured?.includes('localhost') || configured?.includes('127.0.0.1')
-      ? configured
-      : buildApiUrl('localhost');
+    return configured && isLoopbackApiUrl(configured) ? configured : buildApiUrl('localhost');
   }
 
   if (runtime === 'android-emulator') {
@@ -104,16 +132,11 @@ function resolveApiUrl(): string {
   }
 
   const metroHost = getMetroDevHost();
-  if (__DEV__ && metroHost) {
+  if (metroHost) {
     return buildApiUrl(metroHost);
   }
 
-  // Standalone APK / production: use full URL baked in at build time
   if (configured && /^https?:\/\//i.test(configured)) {
-    return configured;
-  }
-
-  if (configured && (configured.includes('localhost') || configured.includes('127.0.0.1'))) {
     return configured;
   }
 
